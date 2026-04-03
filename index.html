@@ -81,11 +81,15 @@
             </div>
         </div>
 
-        <!-- Export Button -->
-        <div class="px-4 py-3 border-t border-gray-200/50 bg-white/60">
+        <!-- Export Buttons -->
+        <div class="px-4 py-3 border-t border-gray-200/50 bg-white/60 flex flex-col gap-2">
             <button onclick="window.exportToCSV()" class="w-full flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-900 border border-slate-700 text-white py-2.5 rounded-xl text-sm font-semibold transition-all shadow-md hover:shadow-lg active:scale-[0.98]">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
-                Xuất file danh sách đã gửi
+                Xuất danh sách đã gửi (CSV)
+            </button>
+            <button onclick="window.exportCoordinates()" class="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 border border-indigo-500 text-white py-2.5 rounded-xl text-sm font-semibold transition-all shadow-md hover:shadow-lg active:scale-[0.98]">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                Tải xuống Tọa Độ (JSON)
             </button>
         </div>
     </aside>

@@ -58,6 +58,43 @@ const toggleEmailStatus = (id) => {
 };
 window.handleStatusToggle = toggleEmailStatus;
 
+// ============================================
+// CUSTOM COORDS (Drag & Drop) - Ưu tiên #1
+// ============================================
+const CUSTOM_COORDS_PREFIX = 'custom_coords_';
+
+const getCustomCoords = (name) => {
+    const stored = localStorage.getItem(CUSTOM_COORDS_PREFIX + name);
+    return stored ? JSON.parse(stored) : null;
+};
+
+const setCustomCoords = (name, latlng) => {
+    localStorage.setItem(CUSTOM_COORDS_PREFIX + name, JSON.stringify([latlng.lat, latlng.lng]));
+    // Cập nhật lại trong mảng regions
+    const region = regions.find(r => r.name === name);
+    if (region) {
+        region.latlng = [latlng.lat, latlng.lng];
+        region.isCustomLoc = true;
+    }
+};
+
+// Xuất toàn bộ tọa độ thành file JSON
+const exportCoordinates = () => {
+    const coordsMap = {};
+    regions.forEach(r => {
+        coordsMap[r.name] = r.latlng;
+    });
+    const json = JSON.stringify(coordsMap, null, 2);
+    const blob = new Blob([json], { type: 'application/json;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = 'an_giang_coordinates.json';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+};
+window.exportCoordinates = exportCoordinates;
+
 /**
  * Geocoding logic via Nominatim with Rate-limit consideration
  */
@@ -142,19 +179,36 @@ const initData = async () => {
             };
         });
 
-        // Gán tọa độ ngay lập tức từ file prebake db.js
+        // Gán tọa độ theo thứ tự ưu tiên:
+        // Ưu tiên 1: Custom coords (drag & drop)
+        // Ưu tiên 2: Prebaked coords (db.js)
+        // Ưu tiên 3: API cache (localStorage geo_wow_)
+        // Ưu tiên 4: Fallback hash
         let latLngBounds = [];
         regions.forEach(region => {
-            if (window.PREBAKED_COORDS && window.PREBAKED_COORDS[region.name]) {
+            region.isCustomLoc = false;
+
+            // Priority 1: Custom drag & drop
+            const custom = getCustomCoords(region.name);
+            if (custom) {
+                region.latlng = custom;
+                region.isVerifiedLoc = true;
+                region.isCustomLoc = true;
+            }
+            // Priority 2: Prebaked (db.js)
+            else if (window.PREBAKED_COORDS && window.PREBAKED_COORDS[region.name]) {
                 region.latlng = window.PREBAKED_COORDS[region.name];
                 region.isVerifiedLoc = true;
-            } else {
+            }
+            // Priority 3: API cache
+            else {
                 const cacheKey = 'geo_wow_' + region.name;
                 const cached = localStorage.getItem(cacheKey);
                 if (cached) {
                     region.latlng = JSON.parse(cached);
                     region.isVerifiedLoc = true;
                 } else {
+                    // Priority 4: Deterministic hash fallback
                     let hash = 0;
                     for (let x = 0; x < region.name.length; x++) hash = Math.imul(31, hash) + region.name.charCodeAt(x) | 0;
                     hash = Math.abs(hash);
@@ -242,15 +296,21 @@ const renderMap = () => {
         const txt = isSent ? 'Hủy gửi (Hoàn tác)' : 'Đánh Dấu Đã Gửi 📤';
 
         const warningLoc = !region.isVerifiedLoc 
-            ? `<div class="text-[10px] bg-yellow-50 text-yellow-600 rounded px-2 py-1 mt-1 font-medium border border-yellow-200">⚠️ Vị trí ước lượng do không tìm thấy trên bản đồ thế giới</div>` 
+            ? `<div class="text-[10px] bg-yellow-50 text-yellow-600 rounded px-2 py-1 mt-1 font-medium border border-yellow-200">⚠️ Vị trí ước lượng – hãy kéo ghim để căn chỉnh</div>` 
+            : '';
+
+        const customBadge = region.isCustomLoc
+            ? `<div class="text-[10px] bg-blue-50 text-blue-600 rounded px-2 py-1 mt-1 font-medium border border-blue-200">✏️ Đã căn chỉnh thủ công</div>`
             : '';
 
         const popupContent = `
-            <div class="p-4 flex flex-col gap-2 min-w-[200px]">
+            <div class="p-4 flex flex-col gap-2 min-w-[210px]">
                 <div>
                     <h3 class="font-bold text-slate-800 text-lg leading-tight tracking-tight">${region.name}</h3>
                     <p class="text-[13px] font-medium text-slate-500 truncate mt-0.5">${region.email}</p>
                     ${warningLoc}
+                    ${customBadge}
+                    <p class="text-[11px] text-slate-400 italic mt-1">💡 Bạn có thể kéo thả ghim này để sửa vị trí</p>
                 </div>
                 <hr class="border-slate-100 my-1"/>
                 <button onclick="window.handleStatusToggle('${region.id}')" 
@@ -260,8 +320,24 @@ const renderMap = () => {
             </div>
         `;
 
-        const marker = L.marker(region.latlng, { icon: icon, regionId: region.id });
+        const marker = L.marker(region.latlng, { icon: icon, regionId: region.id, draggable: true });
         marker.bindPopup(popupContent);
+
+        // Bắt sự kiện kéo thả - lưu tọa độ custom vào localStorage
+        marker.on('dragend', (e) => {
+            const newLatLng = e.target.getLatLng();
+            setCustomCoords(region.name, newLatLng);
+            // Cập nhật popup với badge mới
+            const updatedCustomBadge = `<div class="text-[10px] bg-blue-50 text-blue-600 rounded px-2 py-1 mt-1 font-medium border border-blue-200">✏️ Đã căn chỉnh thủ công</div>`;
+            e.target.setPopupContent(e.target.getPopup().getContent().replace(warningLoc, '').replace(customBadge, updatedCustomBadge));
+            // Flash confirm
+            const toast = document.createElement('div');
+            toast.className = 'fixed bottom-24 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-xs font-semibold px-4 py-2 rounded-full shadow-xl z-[9999] animate-bounce';
+            toast.textContent = `📌 Đã lưu vị trí mới: ${region.name}`;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 2500);
+        });
+
         markerLayerGroup.addLayer(marker);
     });
 

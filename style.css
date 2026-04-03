@@ -1,0 +1,90 @@
+/* Custom Scrollbar */
+.custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.4);
+    border-radius: 20px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: rgba(148, 163, 184, 0.7);
+}
+
+/* Pulsing markers */
+.pulse-marker {
+    border-radius: 50%;
+    /* Keep leaflet's default position: absolute */
+    box-shadow: 0 0 8px rgba(0,0,0,0.3);
+}
+
+.pulse-marker::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    animation: pulsate 2s infinite ease-out;
+    z-index: -1;
+}
+
+.marker-sent {
+    background-color: #10b981; /* Neon green */
+    border: 2px solid #ffffff;
+}
+.marker-sent::after {
+    border: 2px solid #10b981;
+    background-color: rgba(16, 185, 129, 0.3);
+}
+
+.marker-pending {
+    background-color: #ef4444; /* Neon red */
+    border: 2px solid #ffffff;
+}
+.marker-pending::after {
+    border: 2px solid #ef4444;
+    background-color: rgba(239, 68, 68, 0.3);
+}
+
+@keyframes pulsate {
+    0% {
+        transform: translate(-50%, -50%) scale(1);
+        opacity: 0.8;
+    }
+    100% {
+        transform: translate(-50%, -50%) scale(2.5);
+        opacity: 0;
+    }
+}
+
+/* Custom Popup Style */
+.leaflet-popup-content-wrapper {
+    background: rgba(255, 255, 255, 0.95) !important;
+    backdrop-filter: blur(8px);
+    border-radius: 12px !important;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.15) !important;
+    padding: 0;
+    overflow: hidden;
+    border: 1px solid rgba(255,255,255,0.5);
+}
+.leaflet-popup-content {
+    margin: 0 !important;
+    min-width: 220px;
+}
+.leaflet-popup-tip {
+    background: rgba(255, 255, 255, 0.95) !important;
+}
+
+/* Card hover animation */
+.list-card {
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.list-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+}

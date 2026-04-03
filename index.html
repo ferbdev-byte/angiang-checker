@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>An Giang Email Status Pro</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: '#3b82f6',
+                        neonGreen: '#10b981',
+                        neonRed: '#ef4444',
+                        darkPanel: 'rgba(255, 255, 255, 0.85)'
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+    <!-- SheetJS -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="flex flex-col h-screen w-screen overflow-hidden bg-gray-900 text-slate-800 font-sans relative md:block">
+    
+    <!-- Base Map -->
+    <div id="map" class="h-[55vh] w-full shrink-0 relative z-0 md:absolute md:inset-0 md:h-screen"></div>
+
+    <!-- Glassmorphism Floating Sidebar -->
+    <aside class="h-[45vh] w-full bg-white/90 backdrop-blur-md rounded-t-2xl shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] flex flex-col z-10 transition-all duration-300 md:absolute md:top-4 md:left-4 md:h-[calc(100vh-2rem)] md:w-[400px] md:rounded-2xl md:shadow-2xl md:border md:border-white/40 md:overflow-hidden">
+        
+        <!-- Header Section -->
+        <div class="px-6 py-5 border-b border-gray-200/50 bg-white/40">
+            <h1 class="text-2xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent mb-1">
+                An Giang Tracker 📍
+            </h1>
+            <p class="text-sm text-slate-500 font-medium mb-4">Hệ thống giám sát chiến dịch Email</p>
+            
+            <!-- Stats -->
+            <div class="grid grid-cols-3 gap-2 text-center mb-4">
+                <div class="bg-white/60 p-2 rounded-xl shadow-sm border border-white/50">
+                    <div class="text-xs text-slate-500 font-semibold uppercase tracking-wider">Tổng</div>
+                    <div class="text-lg font-bold text-slate-700" id="stat-total">0</div>
+                </div>
+                <div class="bg-green-50/60 p-2 rounded-xl shadow-sm border border-green-100">
+                    <div class="text-xs text-green-600 font-semibold uppercase tracking-wider">Đã gửi</div>
+                    <div class="text-lg font-bold text-green-600" id="stat-sent">0</div>
+                </div>
+                <div class="bg-red-50/60 p-2 rounded-xl shadow-sm border border-red-100">
+                    <div class="text-xs text-red-500 font-semibold uppercase tracking-wider">Chưa gửi</div>
+                    <div class="text-lg font-bold text-red-500" id="stat-pending">0</div>
+                </div>
+            </div>
+
+            <!-- Search -->
+            <div class="relative">
+                <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                </div>
+                <input type="text" id="search-input" class="block w-full pl-10 pr-3 py-2.5 border border-white/50 rounded-xl leading-5 bg-white/50 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:bg-white transition-all duration-200 text-sm font-medium shadow-sm" placeholder="Tìm kiếm xã/phường... (Ví dụ: Mỹ Long)">
+            </div>
+        </div>
+
+        <!-- Scrollable List -->
+        <div id="region-list" class="flex-1 overflow-y-auto p-4 space-y-2 relative custom-scrollbar">
+            <!-- Loading indicator -->
+            <div class="flex flex-col items-center justify-center h-full text-slate-400 space-y-3">
+                <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+                <span class="text-sm font-medium">Đang nạp file Excel và tọa độ...</span>
+            </div>
+        </div>
+
+        <!-- Export Button -->
+        <div class="px-4 py-3 border-t border-gray-200/50 bg-white/60">
+            <button onclick="window.exportToCSV()" class="w-full flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-900 border border-slate-700 text-white py-2.5 rounded-xl text-sm font-semibold transition-all shadow-md hover:shadow-lg active:scale-[0.98]">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                Xuất file danh sách đã gửi
+            </button>
+        </div>
+    </aside>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+    <script src="app.js"></script>
+</body>
+</html>

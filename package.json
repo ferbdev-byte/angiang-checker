@@ -1,0 +1,12 @@
+{
+  "name": "angiang-email-tracker-gis",
+  "version": "1.0.0",
+  "description": "Ứng dụng web GIS theo dõi quản lý việc gửi email tỉnh An Giang",
+  "main": "index.html",
+  "scripts": {
+    "dev": "serve . -p 3000"
+  },
+  "devDependencies": {
+    "serve": "^14.2.4"
+  }
+}

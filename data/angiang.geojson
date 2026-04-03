@@ -1,0 +1,65 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "PX_LX_1",
+        "name": "Phường Mỹ Long",
+        "district": "TP. Long Xuyên"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [105.42, 10.37],
+            [105.44, 10.37],
+            [105.44, 10.39],
+            [105.42, 10.39],
+            [105.42, 10.37]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "PX_CD_1",
+        "name": "Phường Châu Phú A",
+        "district": "TP. Châu Đốc"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [105.11, 10.70],
+            [105.13, 10.70],
+            [105.13, 10.72],
+            [105.11, 10.72],
+            [105.11, 10.70]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "XA_TT_1",
+        "name": "Xã Núi Tô",
+        "district": "Huyện Tri Tôn"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [104.98, 10.41],
+            [105.00, 10.41],
+            [105.00, 10.43],
+            [104.98, 10.43],
+            [104.98, 10.41]
+          ]
+        ]
+      }
+    }
+  ]
+}

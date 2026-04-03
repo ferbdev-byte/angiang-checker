@@ -142,66 +142,38 @@ const initData = async () => {
             };
         });
 
-        // Vẽ bộ khung Local/Cached trước cho nhanh
-        const initBatchGeocodingCacheCheck = () => {
-             regions.forEach(region => {
-                const cacheKey = `geo_wow_${region.name}`;
+        // Gán tọa độ ngay lập tức từ file prebake db.js
+        let latLngBounds = [];
+        regions.forEach(region => {
+            if (window.PREBAKED_COORDS && window.PREBAKED_COORDS[region.name]) {
+                region.latlng = window.PREBAKED_COORDS[region.name];
+                region.isVerifiedLoc = true;
+            } else {
+                const cacheKey = 'geo_wow_' + region.name;
                 const cached = localStorage.getItem(cacheKey);
                 if (cached) {
                     region.latlng = JSON.parse(cached);
                     region.isVerifiedLoc = true;
+                } else {
+                    let hash = 0;
+                    for (let x = 0; x < region.name.length; x++) hash = Math.imul(31, hash) + region.name.charCodeAt(x) | 0;
+                    hash = Math.abs(hash);
+                    region.latlng = [
+                        10.3 + (hash % 1000)/1000 * 0.5,
+                        104.9 + ((hash*7) % 1000)/1000 * 0.6
+                    ];
+                    region.isVerifiedLoc = false;
                 }
-             })
-        }
-        initBatchGeocodingCacheCheck();
-        
-        // Render Initial Map (Chủ yếu local storage caching)
+            }
+            latLngBounds.push(region.latlng);
+        });
+
         renderMap();
         renderList();
 
-        // 🟢 Background API fetch rate limiting 1.2s for Geolocation MISSES
-        let apiQueueTotal = regions.filter(r => !r.isVerifiedLoc).length;
-        let apiProcessed = 0;
-
-        for (let i = 0; i < regions.length; i++) {
-            const region = regions[i];
-            if (!region.isVerifiedLoc) {
-                apiProcessed++;
-                // Nhét indicator Loading nhẹ chạy báo hiệu người dùng
-                const list = document.getElementById('region-list');
-                let gUI = document.getElementById('loading-geo');
-                if (!gUI) {
-                    gUI = document.createElement('div');
-                    gUI.id = "loading-geo";
-                    gUI.className = "text-[12px] text-blue-600 font-medium text-center py-2 mt-1 mb-2 bg-blue-50 rounded-lg animate-pulse border border-blue-100 shadow-sm";
-                    list.insertBefore(gUI, list.firstChild);
-                }
-                gUI.textContent = `⏳ Đang dò tọa độ xã thứ ${apiProcessed}/${apiQueueTotal}: ${region.name}...`;
-
-                // Fetch API (Delay 1.2s bắt buộc để không bị Rate limit OSM)
-                await delay(1200); 
-                const loc = await geocodeCommune(region.name);
-
-                if (loc) {
-                    region.latlng = loc;
-                    region.isVerifiedLoc = true;
-                } else {
-                    // Fallback thông minh: Tỏa ngẫu nhiên quanh Long Xuyên (nhỏ, để không bị đè xếp lớp)
-                    region.latlng = [
-                        DEFAULT_LATLNG[0] + (Math.random() - 0.5) * 0.04,
-                        DEFAULT_LATLNG[1] + (Math.random() - 0.5) * 0.04
-                    ];
-                    localStorage.setItem(`geo_wow_${region.name}`, JSON.stringify(region.latlng));
-                }
-                
-                // Re-render
-                renderMap();
-            }
+        if (latLngBounds.length > 0) {
+            map.fitBounds(L.latLngBounds(latLngBounds), { padding: [20, 20], maxZoom: 14 });
         }
-        
-        // Hoàn thành hết hàng đợi
-        const finalGUI = document.getElementById('loading-geo');
-        if (finalGUI) finalGUI.remove();
 
     } catch (err) {
         console.error(err);

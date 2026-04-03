@@ -8,5 +8,9 @@
   },
   "devDependencies": {
     "serve": "^14.2.4"
+  },
+  "dependencies": {
+    "node-fetch": "^3.3.2",
+    "xlsx": "^0.18.5"
   }
 }

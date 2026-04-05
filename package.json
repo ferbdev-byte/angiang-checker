@@ -4,7 +4,8 @@
   "description": "Ứng dụng web GIS theo dõi quản lý việc gửi email tỉnh An Giang",
   "main": "index.html",
   "scripts": {
-    "dev": "serve . -p 3000"
+    "dev": "serve . -p 3000",
+    "build": "echo 'Building static site...'"
   },
   "devDependencies": {
     "serve": "^14.2.4"

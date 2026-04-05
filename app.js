@@ -5,7 +5,11 @@
 // Configuration
 const FILE_NAME = '105-phuongxa-- email angiang.xlsx';
 const AUTH_KEY = 'ag_tracker_auth';
-const CREDENTIALS = { user: 'admin', pass: 'admin123' };
+const AUTH_ROLE = 'ag_tracker_role';
+const USERS = [
+    { user: 'admin', pass: 'admin123', role: 'admin', name: 'Admin Hub' },
+    { user: 'guest', pass: 'guest123', role: 'viewer', name: 'Khách (Guest)' }
+];
 let isDataLoaded = false;
 
 const DEFAULT_LATLNG = [10.3759, 105.4333]; // Long Xuyen fallback
@@ -151,6 +155,23 @@ const onGeoJsonFeature = (feature, layer) => {
         click: (e) => {
             const name = getCommuneName(feature.properties);
             const isContract = isContracted(name);
+            const role = localStorage.getItem(AUTH_ROLE);
+            
+            // Nếu là Guest, chỉ cho xem thông tin, không hiện nút chốt
+            if (role === 'viewer') {
+                const viewerPopup = `
+                    <div class="p-3 min-w-[180px]">
+                        <h4 class="text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-1">Thông tin khu vực</h4>
+                        <p class="font-bold text-slate-800 text-base">${name}</p>
+                        <div class="mt-2 text-[11px] text-slate-500 bg-slate-50 p-2 rounded-lg border border-slate-100">
+                            🔒 Bạn đang ở chế độ xem (Guest). Vui lòng đăng nhập Admin để cập nhật hợp đồng.
+                        </div>
+                    </div>
+                `;
+                L.popup().setLatLng(e.latlng).setContent(viewerPopup).openOn(map);
+                return;
+            }
+
             const btnText = isContract ? 'Hủy Chốt ✖️' : 'Chốt Hợp Đồng 🤝';
             const btnClass = isContract 
                 ? 'bg-slate-100 text-slate-600 border border-slate-300' 
@@ -291,6 +312,19 @@ const exportCoordinates = () => {
     document.body.removeChild(link);
 };
 window.exportCoordinates = exportCoordinates;
+
+// Logic Responsive: Thu gọn/Mở rộng Sidebar
+const toggleSidebar = () => {
+    const sidebar = document.getElementById('main-sidebar');
+    if (sidebar) {
+        sidebar.classList.toggle('sidebar-collapsed');
+        // Ép Leaflet tính toán lại kích thước map sau khi sidebar thay đổi diện tích
+        setTimeout(() => {
+            if (map) map.invalidateSize();
+        }, 500); // Đợi hiệu ứng chuyển động hoàn tất
+    }
+};
+window.toggleSidebar = toggleSidebar;
 
 
 // Trích xuất dữ liệu thông minh từ mảng dữ liệu (Không dùng key object)
@@ -585,20 +619,39 @@ document.getElementById('search-input').addEventListener('input', (e) => {
 // AUTH & BOOTSTRAP (Đặt ở cuối để tránh lỗi ReferenceError)
 // ============================================
 const checkAuth = () => {
-    const isAuth = localStorage.getItem(AUTH_KEY) === 'true';
+    const auth = localStorage.getItem(AUTH_KEY);
     const loginScreen = document.getElementById('login-screen');
     const appContainer = document.getElementById('app-container');
 
-    if (isAuth) {
+    if (auth === 'true') {
         loginScreen.classList.add('hidden');
         appContainer.classList.remove('hidden');
         
-        // Fix: Leaflet needs to recalculate size when container becomes visible
-        if (map) {
-            setTimeout(() => {
-                map.invalidateSize();
-            }, 200);
+        // Hiển thị vai trò người dùng trong UI
+        const userDisplayName = localStorage.getItem('ag_user_name') || 'Admin Hub';
+        const userRoleName = localStorage.getItem(AUTH_ROLE) === 'viewer' ? 'Khách tham quan' : 'Quản trị viên';
+        
+        const userInfoEl = document.getElementById('user-info-bar');
+        if (userInfoEl) {
+            userInfoEl.innerHTML = `
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 flex items-center justify-center ${localStorage.getItem(AUTH_ROLE) === 'viewer' ? 'bg-slate-500/20 text-slate-400' : 'bg-blue-500/20 text-blue-400'} rounded-xl border border-white/10">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
+                    </div>
+                    <div class="flex flex-col">
+                        <span class="text-xs font-black text-white tracking-wide uppercase">${userDisplayName}</span>
+                        <span class="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Quyền: ${userRoleName}</span>
+                    </div>
+                </div>
+                <button onclick="window.handleLogout()" class="p-2.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-xl transition-all active:scale-95 group" title="Đăng xuất">
+                    <svg class="w-5 h-5 group-hover:rotate-12 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
+                </button>
+            `;
         }
+        // SỬA LỖI: Leaflet map cần được invalidateSize khi container từ hidden -> visible
+        setTimeout(() => {
+            if (map) map.invalidateSize();
+        }, 300);
         
         if (!isDataLoaded) {
             isDataLoaded = true;
@@ -611,14 +664,27 @@ const checkAuth = () => {
     }
 };
 
+// Logic Đăng xuất
+const handleLogout = () => {
+    localStorage.removeItem(AUTH_KEY);
+    localStorage.removeItem(AUTH_ROLE);
+    localStorage.removeItem('ag_user_name');
+    window.location.reload(); 
+};
+window.handleLogout = handleLogout;
+
 const handleLogin = (e) => {
     e.preventDefault();
-    const user = document.getElementById('username').value;
-    const pass = document.getElementById('password').value;
+    const userVal = document.getElementById('username').value;
+    const passVal = document.getElementById('password').value;
     const errorMsg = document.getElementById('login-error');
 
-    if (user === CREDENTIALS.user && pass === CREDENTIALS.pass) {
+    const foundUser = USERS.find(u => u.user === userVal && u.pass === passVal);
+
+    if (foundUser) {
         localStorage.setItem(AUTH_KEY, 'true');
+        localStorage.setItem(AUTH_ROLE, foundUser.role);
+        localStorage.setItem('ag_user_name', foundUser.name);
         errorMsg.classList.add('hidden');
         checkAuth();
     } else {
@@ -629,12 +695,6 @@ const handleLogin = (e) => {
         setTimeout(() => form.classList.remove('animate-shake'), 500);
     }
 };
-
-const handleLogout = () => {
-    localStorage.removeItem(AUTH_KEY);
-    window.location.reload();
-};
-window.handleLogout = handleLogout;
 
 // Khởi tạo Auth khi trang sẵn sàng
 document.addEventListener('DOMContentLoaded', () => {

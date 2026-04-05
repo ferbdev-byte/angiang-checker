@@ -90,29 +90,59 @@
     </div>
 
     <!-- Main Content Container (Hidden until Auth) -->
-    <main id="app-container" class="hidden">
-        <!-- Base Map -->
-        <div id="map" class="h-[55vh] w-full shrink-0 relative z-0 md:absolute md:inset-0 md:h-screen"></div>
+    <main id="app-container" class="hidden h-screen w-screen relative overflow-hidden bg-white">
+        <!-- Base Map (Tràn toàn màn hình) -->
+        <div id="map" class="absolute inset-0 h-full w-full z-0 translate-z-0"></div>
 
-    <!-- Glassmorphism Floating Sidebar -->
-    <aside class="h-[45vh] w-full bg-white/90 backdrop-blur-md rounded-t-2xl shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] flex flex-col z-10 transition-all duration-300 md:absolute md:top-4 md:left-4 md:h-[calc(100vh-2rem)] md:w-[400px] md:rounded-2xl md:shadow-2xl md:border md:border-white/40 md:overflow-hidden">
+    <!-- Glassmorphism Floating Sidebar (Bottom Sheet on Mobile) -->
+    <aside id="main-sidebar" class="fixed bottom-0 left-0 right-0 h-[80vh] md:h-[calc(100vh-2rem)] md:w-[400px] md:top-4 md:left-4 md:bottom-auto bg-white/90 backdrop-blur-md rounded-t-[2.5rem] md:rounded-2xl shadow-2xl border-t md:border border-white/40 flex flex-col z-[2000] transition-all duration-500 ease-in-out">
         
+        <!-- Mobile Handle / Toggle Button -->
+        <div class="flex flex-col items-center py-3 md:hidden cursor-pointer active:bg-slate-50 transition-colors rounded-t-[2.5rem]" onclick="window.toggleSidebar()">
+            <div class="w-12 h-1.5 bg-slate-200 rounded-full mb-1"></div>
+            <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Vuốt để thu gọn</span>
+        </div>
+
         <!-- Header Section -->
-        <div class="px-6 py-5 border-b border-gray-200/50 bg-white/40">
-            <h1 class="text-2xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent mb-1">
-                An Giang Tracker 📍
-            </h1>
-            <p class="text-sm text-slate-500 font-medium mb-4">Hệ thống giám sát chiến dịch Email</p>
-            
-            <!-- Stats -->
-            <div class="grid grid-cols-3 gap-2 text-center mb-4">
-                <div class="bg-white/60 p-2 rounded-xl shadow-sm border border-white/50">
-                    <div class="text-xs text-slate-500 font-semibold uppercase tracking-wider">Tổng</div>
-                    <div class="text-lg font-bold text-slate-700" id="stat-total">0</div>
+        <div class="px-6 py-5 md:py-6 border-b border-gray-200/50 bg-white/40">
+            <div class="flex justify-between items-start mb-4">
+                <div>
+                    <h1 class="text-xl md:text-2xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
+                        An Giang Tracker 📍
+                    </h1>
+                    <p class="text-[11px] md:text-xs text-slate-500 font-semibold uppercase tracking-wider">Hệ thống giám sát Email tỉnh</p>
                 </div>
-                <div class="bg-green-50/60 p-2 rounded-xl shadow-sm border border-green-100">
-                    <div class="text-xs text-green-600 font-semibold uppercase tracking-wider">Đã gửi</div>
-                    <div class="text-lg font-bold text-green-600" id="stat-sent">0</div>
+                <!-- Desktop Toggle -->
+                <button onclick="window.toggleSidebar()" class="hidden md:flex p-2 bg-slate-100 hover:bg-slate-200 text-slate-500 rounded-xl transition-all">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"></path></svg>
+                </button>
+            </div>
+
+            <!-- User Info Bar -->
+            <div id="user-info-bar" class="flex items-center justify-between p-3 mb-5 bg-slate-900 rounded-2xl shadow-lg border border-slate-700/50">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 flex items-center justify-center bg-blue-500/20 text-blue-400 rounded-xl border border-blue-500/30">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
+                    </div>
+                    <div class="flex flex-col">
+                        <span class="text-xs font-black text-white tracking-wide uppercase">Admin Hub</span>
+                        <span class="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Quyền: Quản trị viên</span>
+                    </div>
+                </div>
+                <button onclick="window.handleLogout()" class="p-2.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-xl transition-all active:scale-95 group" title="Đăng xuất">
+                    <svg class="w-5 h-5 group-hover:rotate-12 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
+                </button>
+            </div>
+            
+            <!-- Stats Grid - Minimalized -->
+            <div class="grid grid-cols-3 gap-2 text-center mb-0">
+                <div class="bg-white/60 p-2 rounded-2xl shadow-sm border border-white">
+                    <div class="text-[9px] text-slate-400 font-bold uppercase tracking-tight">Tổng</div>
+                    <div class="text-base font-black text-slate-700" id="stat-total">0</div>
+                </div>
+                <div class="bg-green-50/60 p-2 rounded-2xl shadow-sm border border-green-100">
+                    <div class="text-[9px] text-green-600 font-bold uppercase tracking-tight">Đã gửi</div>
+                    <div class="text-base font-black text-green-600" id="stat-sent">0</div>
                 </div>
                 <div class="bg-red-50/60 p-2 rounded-xl shadow-sm border border-red-100">
                     <div class="text-xs text-red-500 font-semibold uppercase tracking-wider">Chưa gửi</div>

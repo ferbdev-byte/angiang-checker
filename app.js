@@ -22,6 +22,132 @@ L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r
 let regions = [];
 let markerLayerGroup = L.layerGroup().addTo(map);
 
+// Khởi tạo Layer Phân vùng hành chính (GeoJSON Polygon)
+let geoJsonLayer;
+
+// ============================================
+// COMMUNE NAME HELPERS (Dynamic & Robust)
+// ============================================
+
+/**
+ * Get commune name from GeoJSON properties using fallback keys
+ * @param {Object} props - Feature properties
+ * @returns {string} - The detected commune name or 'Không xác định'
+ */
+const getCommuneName = (props) => {
+    if (!props) return 'Không xác định';
+    return props.ten_xa 
+        || props.Ten_Xa 
+        || props.ten_phuong 
+        || props.Ten_Phuong 
+        || props.TEN_HC 
+        || props.Name 
+        || props.name 
+        || props.NAME_3 
+        || 'Không xác định';
+};
+
+/**
+ * Normalize commune names for robust matching (lowercase, no prefixes, no spaces)
+ * @param {string} str - Name to normalize
+ * @returns {string} - Normalized string
+ */
+const normalizeCommuneName = (str) => {
+    if (!str || typeof str !== 'string') return '';
+    return str.toLowerCase()
+        .replace(/(xã|phường|thị trấn|tp\.|thành phố|thị xã|huyện|tphcm\.|district|commune|ward)/g, '')
+        .replace(/\s+/g, '')
+        .trim();
+};
+
+const getChoroplethStyle = (feature) => {
+    let baseColor = '#bdc3c7'; // Màu xám mặc định cho vùng chưa có data (Kiên Giang/vùng khác)
+    let opacity = 0.4;
+    
+    // Tìm xem xã này có nằm trong danh sách tracking (Excel) không
+    const name = getCommuneName(feature.properties);
+    const normalizedName = normalizeCommuneName(name);
+    const trackingRegion = regions.find(r => normalizeCommuneName(r.name) === normalizedName);
+
+    if (trackingRegion) {
+        const kv = trackingRegion.khu_vuc || ''; // Lấy khu vực từ data Excel/Custom
+        if (kv === 'Khu vực I') {
+            baseColor = '#2ecc71'; opacity = 0.4;
+        } else if (kv === 'Khu vực II') {
+            baseColor = '#f39c12'; opacity = 0.5;
+        } else if (kv === 'Khu vực III') {
+            baseColor = '#e74c3c'; opacity = 0.6;
+        } else {
+            baseColor = '#3498db'; opacity = 0.3; // Màu xanh mặc định cho vùng CÓ trong Excel nhưng chưa gán khu vực
+        }
+    }
+
+    return {
+        color: baseColor,
+        weight: 1,
+        fillOpacity: opacity,
+        fillColor: baseColor,
+        dashArray: '3'
+    };
+};
+
+const onGeoJsonHover = (e) => {
+    const layer = e.target;
+    // Tăng độ sáng viền + Fill
+    layer.setStyle({
+        weight: 3,
+        color: '#ffffff',
+        dashArray: '',
+        fillOpacity: layer.options.fillOpacity + 0.2
+    });
+    if (!L.Browser.ie && !L.Browser.opera && !L.Browser.edge) {
+        layer.bringToFront();
+    }
+    // Ghi đè Z-index để Pointer / marker luôn ở trên lớp Polygon vừa bị Pull to front
+    if (markerLayerGroup) {
+        markerLayerGroup.eachLayer(m => {
+            if (m.getElement && m.getElement()) {
+                m.getElement().style.zIndex = 1000;
+            }
+        });
+    }
+};
+
+const onGeoJsonOut = (e) => {
+    if (geoJsonLayer) geoJsonLayer.resetStyle(e.target);
+};
+
+const onGeoJsonFeature = (feature, layer) => {
+    layer.on({
+        mouseover: onGeoJsonHover,
+        mouseout: onGeoJsonOut
+    });
+    
+    const name = getCommuneName(feature.properties);
+    const normalizedName = normalizeCommuneName(name);
+    const trackingRegion = regions.find(r => normalizeCommuneName(r.name) === normalizedName);
+
+    let tooltipContent = `
+        <div class="flex flex-col">
+           <span class="font-bold text-white text-[13px]">${name}</span>
+    `;
+
+    if (trackingRegion) {
+        if (trackingRegion.khu_vuc) {
+            tooltipContent += `<span class="text-[10px] text-gray-300">${trackingRegion.khu_vuc}</span>`;
+        } else {
+            tooltipContent += `<span class="text-[10px] text-blue-300">Đang theo dõi tracking</span>`;
+        }
+    } else {
+        tooltipContent += `<span class="text-[10px] text-gray-400 italic">Chưa có dữ liệu tracking</span>`;
+    }
+
+    tooltipContent += `</div>`;
+
+    layer.bindTooltip(tooltipContent, { sticky: true, className: 'custom-tooltip', direction: 'auto' });
+};
+
+// Sẽ nạp GeoJSON qua Fetch trong hàm initData()
 // Xử lý sự kiện resize tránh lỗi vỡ mảng xám của Leaflet khi chuyển đổi giao diện Mobile/Desktop
 window.addEventListener('resize', () => {
     setTimeout(() => {
@@ -95,36 +221,6 @@ const exportCoordinates = () => {
 };
 window.exportCoordinates = exportCoordinates;
 
-/**
- * Geocoding logic via Nominatim with Rate-limit consideration
- */
-const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-
-const geocodeCommune = async (name) => {
-    // Tận dụng Catch Storage trước khi đập request
-    const cacheKey = `geo_wow_${name}`;
-    const cached = localStorage.getItem(cacheKey);
-    if (cached) return JSON.parse(cached);
-
-    try {
-        console.log(`📡 Đang định vị: ${name}...`);
-        const query = encodeURIComponent(`${name}, An Giang, Vietnam`);
-        const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${query}&limit=1`);
-        const data = await res.json();
-        
-        if (data && data.length > 0) {
-            const loc = [parseFloat(data[0].lat), parseFloat(data[0].lon)];
-            localStorage.setItem(cacheKey, JSON.stringify(loc));
-            return loc;
-        } else {
-            console.warn(`❌ Không tìm thấy tọa độ cho: ${name}`);
-            return null; // Quăng fallback logic
-        }
-    } catch (e) {
-        console.error("Geocoding failed", e);
-        return null; // Quăng fallback logic
-    }
-};
 
 // Trích xuất dữ liệu thông minh từ mảng dữ liệu (Không dùng key object)
 const extractData = (rowArray) => {
@@ -145,99 +241,149 @@ const extractData = (rowArray) => {
 
 const initData = async () => {
     try {
-        // Fetch Excel 
-        const response = await fetch(FILE_NAME);
-        if (!response.ok) throw new Error("File not found");
+        // 1. Đọc dữ liệu Excel trước (Nền tảng để map màu sắc)
+        const response = await fetch(encodeURI(FILE_NAME));
+        if (!response.ok) throw new Error("File tracking (Excel) không tìm thấy: " + FILE_NAME);
         
         const arrayBuffer = await response.arrayBuffer();
         const workbook = XLSX.read(arrayBuffer, { type: 'array' });
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-        // Chuyển đổi dưới dạng Mảng của các Mảng (Array of Arrays) tương tự PapaParse header: false
         const rawJson = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
         
-        // Bỏ qua dòng tiêu đề có chứa các từ khóa Tên, STT...
         let validRows = rawJson.filter((row, index) => {
-             // Loại dòng rỗng hoàn toàn
              if (!row.some(v => String(v).trim() !== '')) return false;
-             // Loại dòng đầu tiên nếu nghi ngờ là header
              const rowText = row.join(' ').toLowerCase();
              if (index === 0 && (rowText.includes('stt') || rowText.includes('tên') || rowText.includes('email'))) {
                  return false;
              }
              return true;
         });
+
+        // 2. Nạp Ranh giới Hành chính (GeoJSON)
+        let geoJsonData = null;
+        const geoPaths = [
+            'data/angiang34.geojson',
+            '/data/angiang34.geojson',
+            'data/new_angiang_boundaries.json',
+            '/data/new_angiang_boundaries.json',
+            'public/data/angiang34.geojson',
+            '/public/data/angiang34.geojson',
+            'angiang34.geojson'
+        ];
+
+        console.log("⏳ Đang nạp Ranh giới Hành chính (GeoJSON)...");
         
-        // Setup initial region array
+        for (const path of geoPaths) {
+            try {
+                const res = await fetch(path);
+                if (res.ok) {
+                    geoJsonData = await res.json();
+                    console.log(`✅ Đã nạp thành công GeoJSON từ: ${path}`);
+                    break;
+                }
+            } catch (e) {
+                continue;
+            }
+        }
+
+        if (!geoJsonData) {
+            console.error("⛔ Không thể nạp được bất kỳ tệp Ranh giới nào. Vui lòng kiểm tra vị trí tệp GeoJSON.");
+        }
+
+        const geoCoordMap = {};
+        if (geoJsonData) {
+            geoJsonData.features.forEach(f => {
+                const props = f.properties;
+                const communeName = getCommuneName(props);
+                if(communeName && communeName !== 'Không xác định') {
+                    const norm = normalizeCommuneName(communeName);
+                    try {
+                        const centroid = turf.centroid(f);
+                        if (centroid && centroid.geometry) {
+                            geoCoordMap[norm] = [centroid.geometry.coordinates[1], centroid.geometry.coordinates[0]];
+                        }
+                    } catch (err) {
+                        console.warn(`⚠️ Lỗi tính centroid cho ${communeName}`);
+                    }
+                }
+            });
+        }
+        
+        let latLngBounds = [];
+
+        // 4. Khởi tạo mảng regions từ Excel + Gán tọa độ từ GeoJSON
         regions = validRows.map((row, index) => {
             const { name, email } = extractData(row);
+            let finalLatLng = [...DEFAULT_LATLNG];
+            let isVerified = false;
+
+            const custom = getCustomCoords(name);
+            if (custom) {
+                finalLatLng = custom;
+                isVerified = true;
+            } else {
+                const norm = normalizeCommuneName(name); 
+                if(geoCoordMap[norm]) {
+                    finalLatLng = geoCoordMap[norm];
+                    isVerified = true;
+                }
+            }
+            
+            if (isVerified && finalLatLng) {
+                latLngBounds.push(finalLatLng);
+            }
+
             return {
                 id: `id_wow_${index}`,
                 name: name,
                 email: email,
-                latlng: [...DEFAULT_LATLNG], // Fallback temp array
-                isVerifiedLoc: false
+                latlng: finalLatLng,
+                isVerifiedLoc: isVerified,
+                isCustomLoc: !!custom
             };
         });
 
-        // Gán tọa độ theo thứ tự ưu tiên:
-        // Ưu tiên 1: Custom coords (drag & drop)
-        // Ưu tiên 2: Prebaked coords (db.js)
-        // Ưu tiên 3: API cache (localStorage geo_wow_)
-        // Ưu tiên 4: Fallback hash
-        let latLngBounds = [];
-        regions.forEach(region => {
-            region.isCustomLoc = false;
+        // 5. Vẽ Ranh giới Polygon (Giờ đã có data regions để style màu)
+        if (geoJsonData) {
+            geoJsonLayer = L.geoJSON(geoJsonData, {
+                style: getChoroplethStyle,
+                onEachFeature: onGeoJsonFeature
+            }).addTo(map);
+            geoJsonLayer.bringToBack();
+            
+            // Tự động căn chỉnh bản đồ theo toàn bộ ranh giới mới
+            map.fitBounds(geoJsonLayer.getBounds(), { padding: [40, 40] });
+        } else {
+            console.error("⛔ Không thể vẽ Ranh giới Polygon vì dữ liệu GeoJSON trống.");
+            // Thông báo trên UI sidebar
+            const listContainer = document.getElementById('region-list');
+            if (listContainer) {
+                listContainer.insertAdjacentHTML('afterbegin', `
+                    <div class="mb-4 p-3 bg-red-100/80 border border-red-200 text-red-700 rounded-xl text-xs font-semibold animate-pulse">
+                        ⚠️ LỖI: Không tìm thấy file Ranh giới! Tọa độ xã đang dùng mặc định nên bị dồn lại một chỗ.
+                    </div>
+                `);
+            }
+            if (latLngBounds.length > 0) {
+                map.fitBounds(L.latLngBounds(latLngBounds), { padding: [40, 40] });
+            }
+        }
 
-            // Priority 1: Custom drag & drop
-            const custom = getCustomCoords(region.name);
-            if (custom) {
-                region.latlng = custom;
-                region.isVerifiedLoc = true;
-                region.isCustomLoc = true;
-            }
-            // Priority 2: Prebaked (db.js)
-            else if (window.PREBAKED_COORDS && window.PREBAKED_COORDS[region.name]) {
-                region.latlng = window.PREBAKED_COORDS[region.name];
-                region.isVerifiedLoc = true;
-            }
-            // Priority 3: API cache
-            else {
-                const cacheKey = 'geo_wow_' + region.name;
-                const cached = localStorage.getItem(cacheKey);
-                if (cached) {
-                    region.latlng = JSON.parse(cached);
-                    region.isVerifiedLoc = true;
-                } else {
-                    // Priority 4: Deterministic hash fallback
-                    let hash = 0;
-                    for (let x = 0; x < region.name.length; x++) hash = Math.imul(31, hash) + region.name.charCodeAt(x) | 0;
-                    hash = Math.abs(hash);
-                    region.latlng = [
-                        10.3 + (hash % 1000)/1000 * 0.5,
-                        104.9 + ((hash*7) % 1000)/1000 * 0.6
-                    ];
-                    region.isVerifiedLoc = false;
-                }
-            }
-            latLngBounds.push(region.latlng);
-        });
-
+        // 6. Vẽ Marker và Danh sách
         renderMap();
         renderList();
-
-        if (latLngBounds.length > 0) {
-            map.fitBounds(L.latLngBounds(latLngBounds), { padding: [20, 20], maxZoom: 14 });
-        }
 
     } catch (err) {
         console.error(err);
         document.getElementById('region-list').innerHTML = `
             <div class="p-4 bg-red-50 text-red-600 rounded-xl border border-red-200">
-                ⛔ Lỗi đọc file: ${FILE_NAME}. Hãy chắc chắn tệp tồn tại!
+                ⛔ Lỗi khởi tạo hệ thống: ${err.message}
             </div>
         `;
     }
 };
+
+
 
 const focusRegion = (id) => {
     const region = regions.find(r => r.id === id);
@@ -249,7 +395,7 @@ const focusRegion = (id) => {
     setTimeout(() => {
         markerLayerGroup.eachLayer(layer => {
             if (layer.options.regionId === id) {
-                layer.togglePopup();
+                layer.openPopup();
             }
         });
     }, 1500);
@@ -296,7 +442,7 @@ const renderMap = () => {
         const txt = isSent ? 'Hủy gửi (Hoàn tác)' : 'Đánh Dấu Đã Gửi 📤';
 
         const warningLoc = !region.isVerifiedLoc 
-            ? `<div class="text-[10px] bg-yellow-50 text-yellow-600 rounded px-2 py-1 mt-1 font-medium border border-yellow-200">⚠️ Vị trí ước lượng – hãy kéo ghim để căn chỉnh</div>` 
+            ? `<div class="text-[10px] bg-yellow-50 text-yellow-600 rounded px-2 py-1 mt-1 font-medium border border-yellow-200 animate-pulse">⏳ Đang tự động tìm vị trí thật... (có thể kéo thả)</div>` 
             : '';
 
         const customBadge = region.isCustomLoc

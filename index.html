@@ -29,8 +29,24 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
     <!-- SheetJS -->
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <!-- TurfJS (Tính toán tọa độ Polygon) -->
+    <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
     <!-- Custom CSS -->
     <link rel="stylesheet" href="style.css">
+    <style>
+        .custom-tooltip {
+            background: rgba(15, 23, 42, 0.9);
+            border: none;
+            color: white;
+            font-weight: 600;
+            font-size: 11px;
+            padding: 4px 8px;
+            border-radius: 6px;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+        }
+        .leaflet-tooltip-left:before { border-left-color: rgba(15, 23, 42, 0.9); }
+        .leaflet-tooltip-right:before { border-right-color: rgba(15, 23, 42, 0.9); }
+    </style>
 </head>
 <body class="flex flex-col h-screen w-screen overflow-hidden bg-gray-900 text-slate-800 font-sans relative md:block">
     

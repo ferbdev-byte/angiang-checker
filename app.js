@@ -2,7 +2,12 @@
  * An Giang Email Status Tracker - WOW Edition
  */
 
+// Configuration
 const FILE_NAME = '105-phuongxa-- email angiang.xlsx';
+const AUTH_KEY = 'ag_tracker_auth';
+const CREDENTIALS = { user: 'admin', pass: 'admin123' };
+let isDataLoaded = false;
+
 const DEFAULT_LATLNG = [10.3759, 105.4333]; // Long Xuyen fallback
 
 // Khởi tạo Map
@@ -21,6 +26,15 @@ L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r
 
 let regions = [];
 let markerLayerGroup = L.layerGroup().addTo(map);
+let stripePattern;
+
+// Helper: Normalize commune names
+
+// Khởi tạo Hatch Pattern (Gạch sọc Vàng Gold cho xã đã ký Hợp đồng)
+// Khởi tạo Hatch Pattern (Đã gỡ bỏ do lỗi hiển thị trên một số trình duyệt)
+function initPatterns() {
+    return true; // Bỏ qua vì đã chuyển sang Solid Style
+}
 
 // Khởi tạo Layer Phân vùng hành chính (GeoJSON Polygon)
 let geoJsonLayer;
@@ -70,6 +84,19 @@ const getChoroplethStyle = (feature) => {
     const trackingRegion = regions.find(r => normalizeCommuneName(r.name) === normalizedName);
 
     if (trackingRegion) {
+        const name = getCommuneName(feature.properties);
+        // Ưu tiên hiệu ứng gạch sọc nếu có hợp đồng (Từ Excel hoặc từ Click trực tiếp)
+        if (trackingRegion.hasContract || isContracted(name)) {
+            return {
+                fillColor: '#f1c40f', // Vàng Gold nổi bật
+                weight: 3,            // Viền dày dặn
+                opacity: 1,
+                color: '#27ae60',      // Viền Xanh lá cây Success
+                dashArray: '',
+                fillOpacity: 0.8      // Đậm đà, chuyên nghiệp
+            };
+        }
+
         const kv = trackingRegion.khu_vuc || ''; // Lấy khu vực từ data Excel/Custom
         if (kv === 'Khu vực I') {
             baseColor = '#2ecc71'; opacity = 0.4;
@@ -120,7 +147,33 @@ const onGeoJsonOut = (e) => {
 const onGeoJsonFeature = (feature, layer) => {
     layer.on({
         mouseover: onGeoJsonHover,
-        mouseout: onGeoJsonOut
+        mouseout: onGeoJsonOut,
+        click: (e) => {
+            const name = getCommuneName(feature.properties);
+            const isContract = isContracted(name);
+            const btnText = isContract ? 'Hủy Chốt ✖️' : 'Chốt Hợp Đồng 🤝';
+            const btnClass = isContract 
+                ? 'bg-slate-100 text-slate-600 border border-slate-300' 
+                : 'bg-amber-500 text-white shadow-amber-200 shadow-md transform hover:scale-105 transition-all';
+
+            const popupContent = `
+                <div class="p-3 min-w-[200px]">
+                    <div class="mb-2">
+                        <h4 class="text-xs uppercase tracking-widest text-slate-400 font-bold">Quản lý Hợp đồng</h4>
+                        <p class="font-bold text-slate-800 text-lg">${name}</p>
+                    </div>
+                    <button onclick="window.handleContractToggle('${name}')" 
+                            class="w-full py-2.5 rounded-xl font-bold text-sm ${btnClass}">
+                        ${btnText}
+                    </button>
+                    <p class="text-[10px] text-center text-slate-400 mt-2 italic">* Trạng thái sẽ được lưu vào trình duyệt</p>
+                </div>
+            `;
+            L.popup()
+                .setLatLng(e.latlng)
+                .setContent(popupContent)
+                .openOn(map);
+        }
     });
     
     const name = getCommuneName(feature.properties);
@@ -184,24 +237,42 @@ const toggleEmailStatus = (id) => {
 };
 window.handleStatusToggle = toggleEmailStatus;
 
+// Logic Chốt Hợp Đồng (LocalStorage)
+const isContracted = (name) => {
+    const norm = normalizeCommuneName(name);
+    return localStorage.getItem(`ag_contract_${norm}`) === 'true';
+};
+
+const toggleContractStatus = (name) => {
+    const norm = normalizeCommuneName(name);
+    if (isContracted(name)) {
+        localStorage.removeItem(`ag_contract_${norm}`);
+    } else {
+        localStorage.setItem(`ag_contract_${norm}`, 'true');
+    }
+    
+    // Fix: Cập nhật Style Bản đồ tức thì cho Layer GeoJSON
+    if (geoJsonLayer) {
+        // Ép Leaflet tính toán lại style cho tất cả các vùng
+        geoJsonLayer.setStyle(getChoroplethStyle);
+    }
+    
+    // Tự động đóng popup sau khi chốt để thấy kết quả
+    map.closePopup();
+    
+    renderMap();
+    renderList(document.getElementById('search-input').value);
+};
+window.handleContractToggle = toggleContractStatus;
+
 // ============================================
-// CUSTOM COORDS (Drag & Drop) - Ưu tiên #1
+// SYSTEM UTILS
 // ============================================
 const CUSTOM_COORDS_PREFIX = 'custom_coords_';
 
 const getCustomCoords = (name) => {
-    const stored = localStorage.getItem(CUSTOM_COORDS_PREFIX + name);
-    return stored ? JSON.parse(stored) : null;
-};
-
-const setCustomCoords = (name, latlng) => {
-    localStorage.setItem(CUSTOM_COORDS_PREFIX + name, JSON.stringify([latlng.lat, latlng.lng]));
-    // Cập nhật lại trong mảng regions
-    const region = regions.find(r => r.name === name);
-    if (region) {
-        region.latlng = [latlng.lat, latlng.lng];
-        region.isCustomLoc = true;
-    }
+    // Lock: Không dùng tọa độ tùy chỉnh nữa, luôn dùng tọa độ đã tính
+    return null;
 };
 
 // Xuất toàn bộ tọa độ thành file JSON
@@ -236,7 +307,12 @@ const extractData = (rowArray) => {
     });
     const name = foundName ? String(foundName).trim() : 'Không xác định';
 
-    return { name, email };
+    // 3. Tìm trạng thái Hợp đồng: chứa "Đã ký" hoặc "Đã ký HĐ"
+    const hasContract = rowArray.some(col => 
+        col && String(col).toLowerCase().includes('đã ký')
+    );
+
+    return { name, email, hasContract };
 };
 
 const initData = async () => {
@@ -312,35 +388,23 @@ const initData = async () => {
         let latLngBounds = [];
 
         // 4. Khởi tạo mảng regions từ Excel + Gán tọa độ từ GeoJSON
-        regions = validRows.map((row, index) => {
-            const { name, email } = extractData(row);
-            let finalLatLng = [...DEFAULT_LATLNG];
-            let isVerified = false;
-
-            const custom = getCustomCoords(name);
-            if (custom) {
-                finalLatLng = custom;
-                isVerified = true;
-            } else {
-                const norm = normalizeCommuneName(name); 
-                if(geoCoordMap[norm]) {
-                    finalLatLng = geoCoordMap[norm];
-                    isVerified = true;
-                }
-            }
+        regions = [];
+        validRows.forEach((rowArray) => {
+            const { name, email, hasContract } = extractData(rowArray);
             
-            if (isVerified && finalLatLng) {
-                latLngBounds.push(finalLatLng);
+            let khu_vuc = 'Khu vực I'; 
+            
+            if (name !== 'Không xác định') {
+                regions.push({
+                    id: btoa(unescape(encodeURIComponent(name))),
+                    name,
+                    email,
+                    hasContract,
+                    khu_vuc,
+                    latlng: geoCoordMap[normalizeCommuneName(name)] || DEFAULT_LATLNG,
+                    isVerifiedLoc: !!geoCoordMap[normalizeCommuneName(name)]
+                });
             }
-
-            return {
-                id: `id_wow_${index}`,
-                name: name,
-                email: email,
-                latlng: finalLatLng,
-                isVerifiedLoc: isVerified,
-                isCustomLoc: !!custom
-            };
         });
 
         // 5. Vẽ Ranh giới Polygon (Giờ đã có data regions để style màu)
@@ -441,22 +505,11 @@ const renderMap = () => {
             : 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:from-blue-700 hover:to-indigo-700 shadow-md hover:shadow-lg transition-transform hover:scale-[1.02] active:scale-95';
         const txt = isSent ? 'Hủy gửi (Hoàn tác)' : 'Đánh Dấu Đã Gửi 📤';
 
-        const warningLoc = !region.isVerifiedLoc 
-            ? `<div class="text-[10px] bg-yellow-50 text-yellow-600 rounded px-2 py-1 mt-1 font-medium border border-yellow-200 animate-pulse">⏳ Đang tự động tìm vị trí thật... (có thể kéo thả)</div>` 
-            : '';
-
-        const customBadge = region.isCustomLoc
-            ? `<div class="text-[10px] bg-blue-50 text-blue-600 rounded px-2 py-1 mt-1 font-medium border border-blue-200">✏️ Đã căn chỉnh thủ công</div>`
-            : '';
-
         const popupContent = `
             <div class="p-4 flex flex-col gap-2 min-w-[210px]">
                 <div>
                     <h3 class="font-bold text-slate-800 text-lg leading-tight tracking-tight">${region.name}</h3>
                     <p class="text-[13px] font-medium text-slate-500 truncate mt-0.5">${region.email}</p>
-                    ${warningLoc}
-                    ${customBadge}
-                    <p class="text-[11px] text-slate-400 italic mt-1">💡 Bạn có thể kéo thả ghim này để sửa vị trí</p>
                 </div>
                 <hr class="border-slate-100 my-1"/>
                 <button onclick="window.handleStatusToggle('${region.id}')" 
@@ -466,23 +519,8 @@ const renderMap = () => {
             </div>
         `;
 
-        const marker = L.marker(region.latlng, { icon: icon, regionId: region.id, draggable: true });
+        const marker = L.marker(region.latlng, { icon: icon, regionId: region.id, draggable: false });
         marker.bindPopup(popupContent);
-
-        // Bắt sự kiện kéo thả - lưu tọa độ custom vào localStorage
-        marker.on('dragend', (e) => {
-            const newLatLng = e.target.getLatLng();
-            setCustomCoords(region.name, newLatLng);
-            // Cập nhật popup với badge mới
-            const updatedCustomBadge = `<div class="text-[10px] bg-blue-50 text-blue-600 rounded px-2 py-1 mt-1 font-medium border border-blue-200">✏️ Đã căn chỉnh thủ công</div>`;
-            e.target.setPopupContent(e.target.getPopup().getContent().replace(warningLoc, '').replace(customBadge, updatedCustomBadge));
-            // Flash confirm
-            const toast = document.createElement('div');
-            toast.className = 'fixed bottom-24 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-xs font-semibold px-4 py-2 rounded-full shadow-xl z-[9999] animate-bounce';
-            toast.textContent = `📌 Đã lưu vị trí mới: ${region.name}`;
-            document.body.appendChild(toast);
-            setTimeout(() => toast.remove(), 2500);
-        });
 
         markerLayerGroup.addLayer(marker);
     });
@@ -525,7 +563,9 @@ const renderList = (searchTerm = '') => {
         
         div.innerHTML = `
             <div class="flex justify-between items-center mb-1.5">
-                <span class="font-bold text-slate-800 text-sm leading-tight pr-2">${region.name}</span>
+                <span class="font-bold text-slate-800 text-sm leading-tight pr-2">
+                    ${isContracted(region.name) ? '🤝 ' : ''}${region.name}
+                </span>
                 ${badge}
             </div>
             <div class="text-[12px] font-medium text-slate-500 truncate flex items-center gap-1.5">
@@ -541,5 +581,64 @@ document.getElementById('search-input').addEventListener('input', (e) => {
     renderList(e.target.value);
 });
 
-// Kickoff
-initData();
+// ============================================
+// AUTH & BOOTSTRAP (Đặt ở cuối để tránh lỗi ReferenceError)
+// ============================================
+const checkAuth = () => {
+    const isAuth = localStorage.getItem(AUTH_KEY) === 'true';
+    const loginScreen = document.getElementById('login-screen');
+    const appContainer = document.getElementById('app-container');
+
+    if (isAuth) {
+        loginScreen.classList.add('hidden');
+        appContainer.classList.remove('hidden');
+        
+        // Fix: Leaflet needs to recalculate size when container becomes visible
+        if (map) {
+            setTimeout(() => {
+                map.invalidateSize();
+            }, 200);
+        }
+        
+        if (!isDataLoaded) {
+            isDataLoaded = true;
+            initPatterns(); // Khởi tạo pattern gạch sọc
+            initData(); // Nạp dữ liệu Excel/GeoJSON
+        }
+    } else {
+        loginScreen.classList.remove('hidden');
+        appContainer.classList.add('hidden');
+    }
+};
+
+const handleLogin = (e) => {
+    e.preventDefault();
+    const user = document.getElementById('username').value;
+    const pass = document.getElementById('password').value;
+    const errorMsg = document.getElementById('login-error');
+
+    if (user === CREDENTIALS.user && pass === CREDENTIALS.pass) {
+        localStorage.setItem(AUTH_KEY, 'true');
+        errorMsg.classList.add('hidden');
+        checkAuth();
+    } else {
+        errorMsg.classList.remove('hidden');
+        // Rung form để báo lỗi
+        const form = document.getElementById('login-form');
+        form.classList.add('animate-shake');
+        setTimeout(() => form.classList.remove('animate-shake'), 500);
+    }
+};
+
+const handleLogout = () => {
+    localStorage.removeItem(AUTH_KEY);
+    window.location.reload();
+};
+window.handleLogout = handleLogout;
+
+// Khởi tạo Auth khi trang sẵn sàng
+document.addEventListener('DOMContentLoaded', () => {
+    const loginForm = document.getElementById('login-form');
+    if (loginForm) loginForm.addEventListener('submit', handleLogin);
+    checkAuth();
+});

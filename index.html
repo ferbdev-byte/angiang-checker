@@ -90,12 +90,11 @@
     </div>
 
     <!-- Main Content Container (Hidden until Auth) -->
-    <main id="app-container" class="hidden h-screen w-screen relative overflow-hidden bg-white">
-        <!-- Base Map (Tràn toàn màn hình) -->
-        <div id="map" class="absolute inset-0 h-full w-full z-0 translate-z-0"></div>
+    <main id="app-container" class="hidden h-screen w-screen relative overflow-hidden bg-white flex">
+        
+        <!-- Glassmorphism Floating Sidebar (Push style) -->
+        <aside id="main-sidebar" class="h-full w-[400px] bg-white/90 backdrop-blur-md shadow-2xl border-r border-white/40 flex flex-col z-50 transition-all duration-300 relative">
 
-    <!-- Glassmorphism Floating Sidebar (Bottom Sheet on Mobile) -->
-    <aside id="main-sidebar" class="fixed bottom-0 left-0 right-0 h-[80vh] md:h-[calc(100vh-2rem)] md:w-[400px] md:top-4 md:left-4 md:bottom-auto bg-white/90 backdrop-blur-md rounded-t-[2.5rem] md:rounded-2xl shadow-2xl border-t md:border border-white/40 flex flex-col z-[2000] transition-all duration-500 ease-in-out">
         
         <!-- Mobile Handle / Toggle Button -->
         <div class="flex flex-col items-center py-3 md:hidden cursor-pointer active:bg-slate-50 transition-colors rounded-t-[2.5rem]" onclick="window.toggleSidebar()">
@@ -112,11 +111,9 @@
                     </h1>
                     <p class="text-[11px] md:text-xs text-slate-500 font-semibold uppercase tracking-wider">Hệ thống giám sát Email tỉnh</p>
                 </div>
-                <!-- Desktop Toggle -->
-                <button onclick="window.toggleSidebar()" class="hidden md:flex p-2 bg-slate-100 hover:bg-slate-200 text-slate-500 rounded-xl transition-all">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"></path></svg>
-                </button>
-            </div>
+                <!-- Nút cũ đã được di chuyển ra ngoài để làm Floating Button -->
+            </div> <!-- Đóng thẻ flex header -->
+
 
             <!-- User Info Bar -->
             <div id="user-info-bar" class="flex items-center justify-between p-3 mb-5 bg-slate-900 rounded-2xl shadow-lg border border-slate-700/50">
@@ -183,7 +180,22 @@
                 Đăng xuất hệ thống
             </button>
         </div>
+        </div>
     </aside>
+
+    <!-- Map Container Container (Tự động lấp đầy) -->
+    <div class="flex-1 h-full relative z-0">
+        <div id="map" class="h-full w-full"></div>
+
+        <!-- Nút Toggle Floating (Luôn hiện trên bản đồ) -->
+        <button id="sidebar-toggle-btn" onclick="window.toggleSidebar()" 
+                class="absolute z-[1000] top-6 left-4 p-2.5 bg-white/90 backdrop-blur-md hover:bg-white text-slate-600 rounded-xl shadow-xl border border-white/50 transition-all duration-300 group flex items-center justify-center"
+                title="Đóng/Mở Sidebar">
+            <svg class="w-5 h-5 transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"></path>
+            </svg>
+        </button>
+    </div>
     </main>
 
     <!-- Leaflet JS & Patterns -->

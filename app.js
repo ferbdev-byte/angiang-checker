@@ -11,8 +11,10 @@ const USERS = [
     { user: 'guest', pass: 'guest123', role: 'viewer', name: 'Khách (Guest)' }
 ];
 let isDataLoaded = false;
+const RACH_GIA_COORDS = L.latLng(10.0159, 105.0809); // Tọa độ trung tâm Rạch Giá
 
 const DEFAULT_LATLNG = [10.3759, 105.4333]; // Long Xuyen fallback
+const ZOOM_THRESHOLD = 11; // Ngưỡng hiển thị Tooltip cố định (Permanent)
 
 // Khởi tạo Map
 const map = L.map('map', {
@@ -79,47 +81,58 @@ const normalizeCommuneName = (str) => {
 };
 
 const getChoroplethStyle = (feature) => {
-    let baseColor = '#bdc3c7'; // Màu xám mặc định cho vùng chưa có data (Kiên Giang/vùng khác)
-    let opacity = 0.4;
-    
-    // Tìm xem xã này có nằm trong danh sách tracking (Excel) không
+    // 1. Dữ liệu nền
     const name = getCommuneName(feature.properties);
     const normalizedName = normalizeCommuneName(name);
     const trackingRegion = regions.find(r => normalizeCommuneName(r.name) === normalizedName);
 
+    // MẶC ĐỊNH: Màu xám nhạt (Slate-100) cho vùng chưa có data hoặc ngoài An Giang
+    let style = {
+        fillColor: '#f1f5f9',
+        weight: 1,
+        opacity: 0.3,
+        color: '#cbd5e1',
+        fillOpacity: 0.2,
+        dashArray: ''
+    };
+
     if (trackingRegion) {
-        const name = getCommuneName(feature.properties);
-        // Ưu tiên hiệu ứng gạch sọc nếu có hợp đồng (Từ Excel hoặc từ Click trực tiếp)
+        // TRƯỜNG HỢP 1: Đã chốt Hợp đồng (Ưu tiên cao nhất - Vàng Gold)
         if (trackingRegion.hasContract || isContracted(name)) {
-            return {
-                fillColor: '#f1c40f', // Vàng Gold nổi bật
-                weight: 3,            // Viền dày dặn
+            style = {
+                fillColor: '#f1c40f', // Vàng Gold
+                weight: 2,
                 opacity: 1,
-                color: '#27ae60',      // Viền Xanh lá cây Success
-                dashArray: '',
-                fillOpacity: 0.8      // Đậm đà, chuyên nghiệp
+                color: '#d97706',      // Viền Amber-600
+                fillOpacity: 0.7,
+                dashArray: ''
+            };
+        } 
+        // TRƯỜNG HỢP 2: Đã gửi Email (Xanh Pastel)
+        else if (isEmailSent(trackingRegion.id)) {
+            style = {
+                fillColor: '#bae6fd', // Xanh dương nhạt (Sky-200)
+                weight: 2,
+                opacity: 1,
+                color: '#2563eb',      // Viền Blue-600
+                fillOpacity: 0.6,
+                dashArray: ''
             };
         }
-
-        const kv = trackingRegion.khu_vuc || ''; // Lấy khu vực từ data Excel/Custom
-        if (kv === 'Khu vực I') {
-            baseColor = '#2ecc71'; opacity = 0.4;
-        } else if (kv === 'Khu vực II') {
-            baseColor = '#f39c12'; opacity = 0.5;
-        } else if (kv === 'Khu vực III') {
-            baseColor = '#e74c3c'; opacity = 0.6;
-        } else {
-            baseColor = '#3498db'; opacity = 0.3; // Màu xanh mặc định cho vùng CÓ trong Excel nhưng chưa gán khu vực
+        // TRƯỜNG HỢP 3: Có trong danh sách Tracking nhưng chưa gửi (Xám nhạt dịu mắt)
+        else {
+            style = {
+                fillColor: '#e2e8f0', // Xám Slate-200
+                weight: 1,
+                opacity: 1,
+                color: '#94a3b8',      // Viền Slate-400
+                fillOpacity: 0.5,
+                dashArray: '3'
+            };
         }
     }
 
-    return {
-        color: baseColor,
-        weight: 1,
-        fillOpacity: opacity,
-        fillColor: baseColor,
-        dashArray: '3'
-    };
+    return style;
 };
 
 const onGeoJsonHover = (e) => {
@@ -149,6 +162,17 @@ const onGeoJsonOut = (e) => {
 };
 
 const onGeoJsonFeature = (feature, layer) => {
+    // 1. Tạo Fallback Text & Logic Debug (Yêu cầu sửa lỗi)
+    const rawName = getCommuneName(feature.properties);
+    // Nếu getCommuneName trả về 'Không xác định', ta coi như rỗng để kích hoạt fallback
+    const mapName = (rawName === 'Không xác định') ? "" : rawName;
+    const finalName = mapName ? mapName : "Khu vực chưa có tên (Missing Data)";
+
+    // Debug Data ngầm
+    if (!mapName || mapName === "") {
+        console.warn("Polygon thiếu tên:", feature.properties);
+    }
+
     layer.on({
         mouseover: onGeoJsonHover,
         mouseout: onGeoJsonOut,
@@ -157,69 +181,130 @@ const onGeoJsonFeature = (feature, layer) => {
             const isContract = isContracted(name);
             const role = localStorage.getItem(AUTH_ROLE);
             
-            // Nếu là Guest, chỉ cho xem thông tin, không hiện nút chốt
-            if (role === 'viewer') {
-                const viewerPopup = `
-                    <div class="p-3 min-w-[180px]">
-                        <h4 class="text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-1">Thông tin khu vực</h4>
-                        <p class="font-bold text-slate-800 text-base">${name}</p>
-                        <div class="mt-2 text-[11px] text-slate-500 bg-slate-50 p-2 rounded-lg border border-slate-100">
-                            🔒 Bạn đang ở chế độ xem (Guest). Vui lòng đăng nhập Admin để cập nhật hợp đồng.
-                        </div>
-                    </div>
-                `;
-                L.popup().setLatLng(e.latlng).setContent(viewerPopup).openOn(map);
-                return;
-            }
+            // Lấy thông tin Ghi chú / CRM hiện tại
+            const notesData = JSON.parse(localStorage.getItem('ag_commune_notes') || '{}');
+            const data = notesData[normalizeCommuneName(name)] || { phone: '', note: '' };
 
-            const btnText = isContract ? 'Hủy Chốt ✖️' : 'Chốt Hợp Đồng 🤝';
-            const btnClass = isContract 
+            const isGuest = role === 'viewer';
+            const btnContractText = isContract ? 'Hủy Chốt ✖️' : 'Chốt Hợp Đồng 🤝';
+            const btnContractClass = isContract 
                 ? 'bg-slate-100 text-slate-600 border border-slate-300' 
                 : 'bg-amber-500 text-white shadow-amber-200 shadow-md transform hover:scale-105 transition-all';
 
+            // Tính toán khoảng cách từ Rạch Giá
+            const targetCenter = layer.getBounds().getCenter();
+            const distanceMeters = RACH_GIA_COORDS.distanceTo(targetCenter);
+            const distanceKm = (distanceMeters / 1000).toFixed(1);
+
             const popupContent = `
-                <div class="p-3 min-w-[200px]">
-                    <div class="mb-2">
-                        <h4 class="text-xs uppercase tracking-widest text-slate-400 font-bold">Quản lý Hợp đồng</h4>
-                        <p class="font-bold text-slate-800 text-lg">${name}</p>
+                <div class="p-4 min-w-[280px]">
+                    <div class="mb-4 border-b border-slate-100 pb-3 text-slate-800">
+                        <h4 class="text-[10px] uppercase tracking-[0.2em] text-slate-400 font-bold mb-1">Hồ sơ khu vực</h4>
+                        <p class="font-black text-2xl leading-tight">${finalName}</p>
+                        <p class="text-[11px] font-medium text-slate-500 mt-1 flex items-center gap-1">
+                            <span class="text-sm">📍</span> Cách Rạch Giá: ~${distanceKm} km <span class="text-[9px] italic text-slate-400 opacity-80">(chim bay)</span>
+                        </p>
                     </div>
-                    <button onclick="window.handleContractToggle('${name}')" 
-                            class="w-full py-2.5 rounded-xl font-bold text-sm ${btnClass}">
-                        ${btnText}
-                    </button>
-                    <p class="text-[10px] text-center text-slate-400 mt-2 italic">* Trạng thái sẽ được lưu vào trình duyệt</p>
+                    
+                    <div class="space-y-4 mb-4">
+                        <div>
+                            <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1.5 ml-1">Số điện thoại liên hệ</label>
+                            <input type="text" id="crm-phone-${normalizeCommuneName(name)}" 
+                                   value="${data.phone}" ${isGuest ? 'disabled' : ''}
+                                   placeholder="Ví dụ: 090..."
+                                   class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 transition-all ${isGuest ? 'opacity-50' : ''}">
+                        </div>
+                        <div>
+                            <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1.5 ml-1">Ghi chú chiến dịch</label>
+                            <textarea id="crm-note-${normalizeCommuneName(name)}" 
+                                      rows="2" ${isGuest ? 'disabled' : ''}
+                                      placeholder="Nhập ghi chú quan trọng..."
+                                      class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 transition-all ${isGuest ? 'opacity-50' : ''}">${data.note}</textarea>
+                        </div>
+                    </div>
+
+                    ${!isGuest ? `
+                    <div class="flex flex-col gap-2">
+                        <button onclick="window.handleSaveNote('${name}')" 
+                                class="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-sm shadow-lg shadow-blue-600/20 active:scale-95 transition-all">
+                            💾 Lưu thông tin CRM
+                        </button>
+                        <button onclick="window.handleContractToggle('${name}')" 
+                                class="w-full py-2.5 rounded-xl font-bold text-sm ${btnContractClass}">
+                            ${btnContractText}
+                        </button>
+                    </div>
+                    ` : `
+                    <div class="p-3 bg-indigo-50 text-indigo-700 text-[11px] font-medium rounded-xl border border-indigo-100 flex items-center gap-2">
+                         <span>🔒 Chế độ xem: Bạn không có quyền chỉnh sửa hồ sơ.</span>
+                    </div>
+                    `}
                 </div>
             `;
-            L.popup()
+            L.popup({ maxWidth: 350 })
                 .setLatLng(e.latlng)
                 .setContent(popupContent)
                 .openOn(map);
         }
     });
     
+    // Sử dụng finalName cho Tooltip render
     const name = getCommuneName(feature.properties);
     const normalizedName = normalizeCommuneName(name);
     const trackingRegion = regions.find(r => normalizeCommuneName(r.name) === normalizedName);
 
     let tooltipContent = `
         <div class="flex flex-col">
-           <span class="font-bold text-white text-[13px]">${name}</span>
+           <span class="font-black text-slate-800 text-[14px]">${finalName}</span>
     `;
 
     if (trackingRegion) {
         if (trackingRegion.khu_vuc) {
-            tooltipContent += `<span class="text-[10px] text-gray-300">${trackingRegion.khu_vuc}</span>`;
+            tooltipContent += `<span class="text-[10px] text-slate-500 font-bold">${trackingRegion.khu_vuc}</span>`;
         } else {
-            tooltipContent += `<span class="text-[10px] text-blue-300">Đang theo dõi tracking</span>`;
+            tooltipContent += `<span class="text-[10px] text-blue-600 font-bold">Đang theo dõi tracking</span>`;
         }
     } else {
-        tooltipContent += `<span class="text-[10px] text-gray-400 italic">Chưa có dữ liệu tracking</span>`;
+        tooltipContent += `<span class="text-[10px] text-slate-400 italic">Chưa có dữ liệu tracking</span>`;
     }
 
     tooltipContent += `</div>`;
 
-    layer.bindTooltip(tooltipContent, { sticky: true, className: 'custom-tooltip', direction: 'auto' });
+    // 2. Logic Dynamic Tooltip: Tự động quyết định hiển thị theo mức Zoom
+    const currentZoom = map.getZoom();
+    const isPermanent = currentZoom >= ZOOM_THRESHOLD;
+
+    layer.bindTooltip(tooltipContent, { 
+        sticky: !isPermanent, 
+        permanent: isPermanent,
+        className: 'custom-tooltip', 
+        direction: isPermanent ? 'center' : 'auto' 
+    });
 };
+
+// 3. Zoom Listener: Cập nhật Tooltip cho TOÀN BỘ Layer khi dừng Zoom
+map.on('zoomend', () => {
+    if (!geoJsonLayer) return;
+    
+    const zoom = map.getZoom();
+    const isPermanent = zoom >= ZOOM_THRESHOLD;
+    
+    console.log(`🔍 Zoom Level: ${zoom} | Tooltip Mode: ${isPermanent ? 'PERMANENT' : 'HOVER'}`);
+    
+    geoJsonLayer.eachLayer(layer => {
+        const tooltip = layer.getTooltip();
+        if (tooltip) {
+            const content = tooltip.getContent();
+            layer.unbindTooltip();
+            layer.bindTooltip(content, {
+                sticky: !isPermanent,
+                permanent: isPermanent,
+                className: 'custom-tooltip',
+                direction: isPermanent ? 'center' : 'auto'
+            });
+        }
+    });
+});
 
 // Sẽ nạp GeoJSON qua Fetch trong hàm initData()
 // Xử lý sự kiện resize tránh lỗi vỡ mảng xám của Leaflet khi chuyển đổi giao diện Mobile/Desktop
@@ -253,6 +338,12 @@ const toggleEmailStatus = (id) => {
     } else {
         localStorage.setItem(`ag_wow_${id}`, 'true');
     }
+    
+    // Cập nhật Style Bản đồ tức thì cho Layer GeoJSON
+    if (geoJsonLayer) {
+        geoJsonLayer.setStyle(getChoroplethStyle);
+    }
+
     renderMap();
     renderList(document.getElementById('search-input').value);
 };
@@ -285,6 +376,27 @@ const toggleContractStatus = (name) => {
     renderList(document.getElementById('search-input').value);
 };
 window.handleContractToggle = toggleContractStatus;
+
+// Mini-CRM Logic: Lưu trữ SĐT và Ghi chú
+const handleSaveNote = (name) => {
+    const norm = normalizeCommuneName(name);
+    const phone = document.getElementById(`crm-phone-${norm}`).value;
+    const note = document.getElementById(`crm-note-${norm}`).value;
+
+    const notesData = JSON.parse(localStorage.getItem('ag_commune_notes') || '{}');
+    notesData[norm] = { phone, note, updatedAt: new Date().toISOString() };
+    
+    localStorage.setItem('ag_commune_notes', JSON.stringify(notesData));
+    
+    // Tự động đóng popup và nạp lại list
+    map.closePopup();
+    renderList(document.getElementById('search-input').value);
+    
+    // Toast thông báo (Dùng native alert hoặc UI tùy chọn)
+    console.log(`✅ Đã lưu CRM cho ${name}`);
+    // Ta có thể thêm một UI Toast sau nếu muốn chuyên nghiệp hơn
+};
+window.handleSaveNote = handleSaveNote;
 
 // ============================================
 // SYSTEM UTILS
@@ -321,7 +433,7 @@ const toggleSidebar = () => {
         // Ép Leaflet tính toán lại kích thước map sau khi sidebar thay đổi diện tích
         setTimeout(() => {
             if (map) map.invalidateSize();
-        }, 500); // Đợi hiệu ứng chuyển động hoàn tất
+        }, 350); // Đợi hiệu ứng trượt (300ms) của Sidebar hoàn tất + 50ms bù trừ
     }
 };
 window.toggleSidebar = toggleSidebar;
@@ -599,8 +711,14 @@ const renderList = (searchTerm = '') => {
             <div class="flex justify-between items-center mb-1.5">
                 <span class="font-bold text-slate-800 text-sm leading-tight pr-2">
                     ${isContracted(region.name) ? '🤝 ' : ''}${region.name}
+                    ${(JSON.parse(localStorage.getItem('ag_commune_notes') || '{}')[normalizeCommuneName(region.name)]?.phone) ? '<span class="ml-1" title="Đã có SĐT CRM">📱</span>' : ''}
                 </span>
                 ${badge}
+            </div>
+            <div class="text-[10px] mt-2 flex gap-2 items-center">
+                <span class="text-xs">📍</span>
+                <span class="bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-md font-bold">${region.email_status || 'Chưa gửi'}</span>
+                ${isContracted(region.name) ? '<span class="bg-amber-100 text-amber-700 px-2 py-0.5 rounded-md font-bold text-[9px]">HỢP ĐỒNG</span>' : ''}
             </div>
             <div class="text-[12px] font-medium text-slate-500 truncate flex items-center gap-1.5">
                 <svg class="w-3.5 h-3.5 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>

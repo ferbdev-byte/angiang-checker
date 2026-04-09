@@ -44,13 +44,19 @@ L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r
 let regions = [];
 let markerLayerGroup = L.layerGroup().addTo(map);
 let stripePattern;
+let mapFilterMode = 'all'; // 'all', 'sent', 'contracted', 'pending'
+let sortBy = 'name'; // 'name', 'status', 'email', 'updated'
+let selectedRegionIds = new Set();
+let lastRenderedRegionIds = [];
+let warningPanelExpanded = false;
 
 const emptyCommuneState = () => ({
     email_sent: false,
     contracted: false,
     phone: '',
     note: '',
-    updated_at: null
+    updated_at: null,
+    updated_by: null
 });
 
 const resolveCommuneKey = (value) => {
@@ -76,7 +82,7 @@ const loadUserStates = async () => {
 
     const { data, error } = await supabaseClient
         .from(COMMUNE_STATE_TABLE)
-        .select('commune_key,email_sent,contracted,phone,note,updated_at');
+        .select('commune_key,email_sent,contracted,phone,note,updated_at,updated_by');
 
     if (error) throw error;
 
@@ -85,7 +91,8 @@ const loadUserStates = async () => {
         contracted: Boolean(row.contracted),
         phone: row.phone || '',
         note: row.note || '',
-        updated_at: row.updated_at || null
+        updated_at: row.updated_at || null,
+        updated_by: row.updated_by || null
     }]));
 };
 
@@ -116,7 +123,8 @@ const upsertCommuneState = async (communeName, patch) => {
         contracted: Boolean(nextState.contracted),
         phone: nextState.phone || '',
         note: nextState.note || '',
-        updated_at: nextState.updated_at
+        updated_at: nextState.updated_at,
+        updated_by: nextState.updated_by || null
     });
 };
 
@@ -205,7 +213,7 @@ const getCommuneName = (props) => {
 const normalizeCommuneName = (str) => {
     if (!str || typeof str !== 'string') return '';
     return str.toLowerCase()
-        .replace(/(xã|phường|thị trấn|tp\.|thành phố|thị xã|huyện|tphcm\.|district|commune|ward)/g, '')
+    .replace(/(đặc khu|xac khu|xã|phường|thị trấn|tp\.|thành phố|thị xã|huyện|tphcm\.|district|commune|ward)/g, '')
         .replace(/\s+/g, '')
         .trim();
 };
@@ -739,29 +747,475 @@ const focusRegion = (id) => {
 window.focusRegion = focusRegion;
 
 // Logic Backup Dữ liệu
-const exportToCSV = () => {
-    const sentRegions = regions.filter(r => isEmailSent(r.name));
-    if (sentRegions.length === 0) {
-        alert("Chưa có xã nào được đánh dấu đã gửi!");
-        return;
-    }
-    
-    // Generate CSV Content with UTF-8 BOM explicitly
-    let csvContent = "\uFEFFSTT,Tên Xã/Phường,Email,Tọa Độ\n";
-    sentRegions.forEach((r, idx) => {
-        csvContent += `${idx + 1},"${r.name}","${r.email}","${r.latlng.join(', ')}"\n`;
+const getStatusLabel = (region) => {
+    const sent = isEmailSent(region.name);
+    const contracted = isContracted(region.name);
+    if (contracted) return 'Đã ký hợp đồng';
+    if (sent) return 'Đã gửi - Chưa ký';
+    return 'Chưa gửi';
+};
+
+const formatUpdatedAt = (isoValue) => {
+    if (!isoValue) return '';
+    const date = new Date(isoValue);
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toLocaleString('vi-VN');
+};
+
+const toCsvCell = (value) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+
+const buildManagementRows = (regionsSubset) => {
+    return regionsSubset.map((region, idx) => {
+        const state = getCommuneState(region.name);
+        return [
+            idx + 1,
+            region.name,
+            region.email,
+            state.phone || '',
+            state.note || '',
+            getStatusLabel(region),
+            formatUpdatedAt(state.updated_at),
+            state.updated_by || '',
+            region.latlng.join(', ')
+        ];
     });
-    
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement("a");
+};
+
+const downloadManagementCsv = (rows, fileName) => {
+    const header = [
+        'STT',
+        'Tên Xã/Phường',
+        'Email',
+        'SĐT',
+        'Ghi chú',
+        'Trạng Thái',
+        'Cập nhật lúc',
+        'Cập nhật bởi',
+        'Tọa Độ'
+    ];
+
+    const csvLines = [header, ...rows]
+        .map((line) => line.map(toCsvCell).join(','))
+        .join('\n');
+
+    const blob = new Blob([`\uFEFF${csvLines}`], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
-    link.setAttribute("href", url);
-    link.setAttribute("download", "danh_sach_da_gui.csv");
+    link.setAttribute('href', url);
+    link.setAttribute('download', fileName);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
 };
+
+const exportToCSV = () => {
+    const sentRegions = regions.filter((r) => isEmailSent(r.name) && !isContracted(r.name));
+    if (sentRegions.length === 0) {
+        alert('Không có xã nào ở nhóm Đã gửi - Chưa ký.');
+        return;
+    }
+
+    downloadManagementCsv(
+        buildManagementRows(sentRegions),
+        'bao_cao_da_gui_chua_ky.csv'
+    );
+};
 window.exportToCSV = exportToCSV;
+
+const exportPendingCSV = () => {
+    const pendingRegions = regions.filter((r) => !isEmailSent(r.name) && !isContracted(r.name));
+    if (pendingRegions.length === 0) {
+        alert('Không có xã nào ở nhóm Chưa gửi.');
+        return;
+    }
+
+    downloadManagementCsv(
+        buildManagementRows(pendingRegions),
+        'bao_cao_chua_gui.csv'
+    );
+};
+window.exportPendingCSV = exportPendingCSV;
+
+const exportContractedCSV = () => {
+    const contractedRegions = regions.filter((r) => isContracted(r.name));
+    if (contractedRegions.length === 0) {
+        alert('Chưa có hợp đồng nào được ký!');
+        return;
+    }
+
+    downloadManagementCsv(
+        buildManagementRows(contractedRegions),
+        'bao_cao_hop_dong_da_ky.csv'
+    );
+};
+window.exportContractedCSV = exportContractedCSV;
+
+const exportManagementSummaryCSV = () => {
+    if (regions.length === 0) {
+        alert('Chưa có dữ liệu để xuất báo cáo tổng hợp.');
+        return;
+    }
+
+    downloadManagementCsv(
+        buildManagementRows(regions),
+        'bao_cao_tong_hop_quan_ly.csv'
+    );
+};
+window.exportManagementSummaryCSV = exportManagementSummaryCSV;
+
+const updateBulkSelectionUI = () => {
+    const bulkBar = document.getElementById('bulk-actions-bar');
+    const selectedCountEl = document.getElementById('bulk-selected-count');
+    const selectedCount = selectedRegionIds.size;
+
+    if (selectedCountEl) {
+        selectedCountEl.textContent = `${selectedCount} xã đã chọn`;
+    }
+
+    if (bulkBar) {
+        bulkBar.classList.toggle('hidden', selectedCount === 0);
+    }
+};
+
+const toggleRegionSelection = (id, checked) => {
+    const regionId = String(id);
+    if (checked) {
+        selectedRegionIds.add(regionId);
+    } else {
+        selectedRegionIds.delete(regionId);
+    }
+    updateBulkSelectionUI();
+};
+window.toggleRegionSelection = toggleRegionSelection;
+
+const clearBulkSelection = () => {
+    selectedRegionIds.clear();
+    updateBulkSelectionUI();
+    renderList(document.getElementById('search-input')?.value || '');
+};
+window.clearBulkSelection = clearBulkSelection;
+
+const selectVisibleRegions = () => {
+    lastRenderedRegionIds.forEach((id) => selectedRegionIds.add(String(id)));
+    updateBulkSelectionUI();
+    renderList(document.getElementById('search-input')?.value || '');
+};
+window.selectVisibleRegions = selectVisibleRegions;
+
+const applyBulkAction = async (action) => {
+    if (selectedRegionIds.size === 0) {
+        alert('Chưa chọn xã/phường nào để thao tác hàng loạt.');
+        return;
+    }
+
+    const selectedRegions = regions.filter((region) => selectedRegionIds.has(String(region.id)));
+    if (selectedRegions.length === 0) {
+        alert('Không tìm thấy dữ liệu xã/phường đã chọn.');
+        return;
+    }
+
+    try {
+        for (const region of selectedRegions) {
+            if (action === 'mark-sent') {
+                await upsertCommuneState(region.name, { email_sent: true });
+            } else if (action === 'unmark-sent') {
+                await upsertCommuneState(region.name, { email_sent: false });
+            } else if (action === 'mark-contracted') {
+                await upsertCommuneState(region.name, { contracted: true });
+            } else if (action === 'unmark-contracted') {
+                await upsertCommuneState(region.name, { contracted: false });
+            }
+        }
+    } catch (error) {
+        console.error('Bulk update failed:', error);
+        alert('Không thể cập nhật hàng loạt lên Supabase. Vui lòng thử lại.');
+        return;
+    }
+
+    if (geoJsonLayer) {
+        geoJsonLayer.setStyle(getChoroplethStyle);
+    }
+
+    clearBulkSelection();
+    renderMap();
+    renderList(document.getElementById('search-input')?.value || '');
+};
+window.applyBulkAction = applyBulkAction;
+
+const toggleExportActions = () => {
+    const container = document.getElementById('export-actions-content');
+    const icon = document.getElementById('export-actions-toggle-icon');
+    const label = document.getElementById('export-actions-toggle-label');
+    if (!container || !icon || !label) return;
+
+    const willHide = !container.classList.contains('hidden');
+    container.classList.toggle('hidden');
+    icon.classList.toggle('rotate-180', !willHide);
+    label.textContent = willHide ? 'Mở rộng' : 'Thu gọn';
+};
+window.toggleExportActions = toggleExportActions;
+
+const toggleStatsBox = () => {
+    const container = document.getElementById('statsbox-content');
+    const icon = document.getElementById('statsbox-toggle-icon');
+    const label = document.getElementById('statsbox-toggle-label');
+    if (!container || !icon || !label) return;
+
+    const willHide = !container.classList.contains('hidden');
+    container.classList.toggle('hidden');
+    icon.classList.toggle('rotate-180', !willHide);
+    label.textContent = willHide ? 'Mở rộng' : 'Thu gọn';
+};
+window.toggleStatsBox = toggleStatsBox;
+
+const hasValidEmail = (email) => {
+    if (!email) return false;
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email).trim());
+};
+
+const detectDataAnomalies = () => {
+    const warnings = [];
+
+    regions.forEach((region) => {
+        const state = getCommuneState(region.name);
+        const sent = state.email_sent === true;
+        const contracted = state.contracted === true;
+        const phone = String(state.phone || '').trim();
+        const note = String(state.note || '').trim();
+        const email = String(region.email || '').trim();
+
+        if (!hasValidEmail(email)) {
+            warnings.push({
+                regionId: region.id,
+                message: `${region.name}: Email không hợp lệ hoặc đang trống.`
+            });
+        }
+
+        if (contracted && !sent) {
+            warnings.push({
+                regionId: region.id,
+                message: `${region.name}: Đã ký nhưng chưa đánh dấu đã gửi.`
+            });
+        }
+
+        if (contracted && !phone) {
+            warnings.push({
+                regionId: region.id,
+                message: `${region.name}: Đã ký nhưng thiếu số điện thoại CRM.`
+            });
+        }
+
+        if (contracted && !note) {
+            warnings.push({
+                regionId: region.id,
+                message: `${region.name}: Đã ký nhưng chưa có ghi chú CRM.`
+            });
+        }
+    });
+
+    return warnings;
+};
+
+const toggleWarningPanel = () => {
+    warningPanelExpanded = !warningPanelExpanded;
+    renderDataWarnings();
+};
+window.toggleWarningPanel = toggleWarningPanel;
+
+const renderDataWarnings = () => {
+    const warningPanel = document.getElementById('data-warning-panel');
+    const warningCount = document.getElementById('data-warning-count');
+    const warningList = document.getElementById('data-warning-list');
+    const warningHint = document.getElementById('data-warning-hint');
+    const warningToggleText = document.getElementById('data-warning-toggle-text');
+    const warningToggleIcon = document.getElementById('data-warning-toggle-icon');
+
+    if (!warningPanel || !warningCount || !warningList || !warningHint || !warningToggleText || !warningToggleIcon) return;
+
+    const warnings = detectDataAnomalies();
+    warningCount.textContent = `${warnings.length} cảnh báo`;
+
+    if (warnings.length === 0) {
+        warningPanel.classList.add('hidden');
+        warningList.innerHTML = '';
+        warningHint.textContent = '';
+        warningPanelExpanded = false;
+        return;
+    }
+
+    warningPanel.classList.remove('hidden');
+    warningList.innerHTML = '';
+    warningHint.textContent = warningPanelExpanded
+        ? 'Nhấn vào cảnh báo để mở vị trí trên bản đồ.'
+        : 'Đang thu gọn để ưu tiên xem danh sách xã/phường.';
+    warningList.classList.toggle('hidden', !warningPanelExpanded);
+    warningToggleText.textContent = warningPanelExpanded ? 'Thu gọn' : 'Xem cảnh báo';
+    warningToggleIcon.classList.toggle('rotate-180', warningPanelExpanded);
+
+    warnings.slice(0, 5).forEach((warning) => {
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'w-full text-left px-2 py-1 rounded-md bg-amber-50 hover:bg-amber-100 text-[11px] font-semibold text-amber-700 transition-colors';
+        item.textContent = warning.message;
+        item.onclick = () => focusRegion(warning.regionId);
+        warningList.appendChild(item);
+    });
+};
+
+const filterByContract = () => {
+    const searchInput = document.getElementById('search-input');
+    searchInput.value = '';
+    
+    const listContainer = document.getElementById('region-list');
+    listContainer.innerHTML = '';
+
+    // Lọc những xã đã KÝ hợp đồng (độc lập, ko cần gửi email)
+    const contractedRegions = regions.filter(r => isContracted(r.name));
+
+    if (contractedRegions.length === 0) {
+        listContainer.insertAdjacentHTML('beforeend', '<div class="text-center text-slate-400 py-6 text-sm font-medium">Chưa có hợp đồng nào được ký 📋</div>');
+        return;
+    }
+
+    contractedRegions.forEach(region => {
+        const regionState = getCommuneState(region.name);
+        const isSent = isEmailSent(region.name);
+        
+        const div = document.createElement('div');
+        div.className = `list-card p-3.5 mb-2.5 rounded-xl cursor-pointer border border-white/60 shadow-sm bg-yellow-50/80 border-l-[3px] border-amber-500`;
+        div.onclick = () => focusRegion(region.id);
+        
+        div.innerHTML = `
+            <div class="flex justify-between items-center mb-1.5">
+                <span class="font-bold text-slate-800 text-sm leading-tight pr-2">
+                    🤝 ${region.name}
+                    ${regionState.phone ? '<span class="ml-1" title="Đã có SĐT CRM">📱</span>' : ''}
+                </span>
+                <span class="px-2.5 py-1 bg-amber-100 text-amber-700 text-[10px] font-bold rounded-full uppercase tracking-widest shadow-sm">Đã ký</span>
+            </div>
+            <div class="text-[10px] mt-2 flex gap-2 items-center">
+                <span class="text-xs">📍</span>
+                <span class="bg-amber-100 text-amber-700 px-2 py-0.5 rounded-md font-bold">✅ ĐÃ KÝ HỢP ĐỒNG</span>
+                ${isSent ? '<span class="bg-green-100 text-green-700 px-2 py-0.5 rounded-md font-bold text-[9px]">✉️ ĐÃ GỬI</span>' : '<span class="bg-red-100 text-red-600 px-2 py-0.5 rounded-md font-bold text-[9px]">CHƯA GỬI</span>'}
+            </div>
+            <div class="text-[12px] font-medium text-slate-500 truncate flex items-center gap-1.5">
+                <svg class="w-3.5 h-3.5 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>
+                ${region.email}
+            </div>
+        `;
+        listContainer.appendChild(div);
+    });
+};
+window.filterByContract = filterByContract;
+
+const filterBySent = () => {
+    const searchInput = document.getElementById('search-input');
+    searchInput.value = '';
+    
+    const listContainer = document.getElementById('region-list');
+    listContainer.innerHTML = '';
+
+    // Lọc những xã đã gửi EMAIL nhưng CHƯA ký hợp đồng
+    const sentRegions = regions.filter(r => isEmailSent(r.name) && !isContracted(r.name));
+
+    if (sentRegions.length === 0) {
+        listContainer.insertAdjacentHTML('beforeend', '<div class="text-center text-slate-400 py-6 text-sm font-medium">Chưa có email nào được gửi hoặc tất cả đã được chốt hợp đồng 📧</div>');
+        return;
+    }
+
+    sentRegions.forEach(region => {
+        const regionState = getCommuneState(region.name);
+
+        const div = document.createElement('div');
+        div.className = `list-card p-3.5 mb-2.5 rounded-xl cursor-pointer border border-white/60 shadow-sm bg-green-50/80 border-l-[3px] border-emerald-500`;
+        div.onclick = () => focusRegion(region.id);
+        
+        div.innerHTML = `
+            <div class="flex justify-between items-center mb-1.5">
+                <span class="font-bold text-slate-800 text-sm leading-tight pr-2">
+                    ✉️ ${region.name}
+                    ${regionState.phone ? '<span class="ml-1" title="Đã có SĐT CRM">📱</span>' : ''}
+                </span>
+                <span class="px-2.5 py-1 bg-green-100 text-green-700 text-[10px] font-bold rounded-full uppercase tracking-widest shadow-sm">Đã gửi</span>
+            </div>
+            <div class="text-[10px] mt-2 flex gap-2 items-center">
+                <span class="text-xs">📍</span>
+                <span class="bg-green-100 text-green-700 px-2 py-0.5 rounded-md font-bold">✉️ ĐÃ GỬI - CHƯA KÝ</span>
+            </div>
+            <div class="text-[12px] font-medium text-slate-500 truncate flex items-center gap-1.5">
+                <svg class="w-3.5 h-3.5 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>
+                ${region.email}
+            </div>
+        `;
+        listContainer.appendChild(div);
+    });
+};
+window.filterBySent = filterBySent;
+
+const filterAll = () => {
+    const searchInput = document.getElementById('search-input');
+    searchInput.value = '';
+    renderList('');
+};
+window.filterAll = filterAll;
+
+const filterByPending = () => {
+    const searchInput = document.getElementById('search-input');
+    searchInput.value = '';
+    
+    const listContainer = document.getElementById('region-list');
+    listContainer.innerHTML = '';
+
+    const pendingRegions = regions.filter(r => !isEmailSent(r.name));
+
+    if (pendingRegions.length === 0) {
+        listContainer.insertAdjacentHTML('beforeend', '<div class="text-center text-slate-400 py-6 text-sm font-medium">Tất cả email đều đã được gửi! 🎉</div>');
+        return;
+    }
+
+    pendingRegions.forEach(region => {
+        const isContract = isContracted(region.name);
+        const regionState = getCommuneState(region.name);
+        
+        const div = document.createElement('div');
+        div.className = `list-card p-3.5 mb-2.5 rounded-xl cursor-pointer border border-white/60 shadow-sm bg-red-50/80 border-l-[3px] border-red-500`;
+        div.onclick = () => focusRegion(region.id);
+        
+        div.innerHTML = `
+            <div class="flex justify-between items-center mb-1.5">
+                <span class="font-bold text-slate-800 text-sm leading-tight pr-2">
+                    ${isContract ? '🤝 ' : ''}${region.name}
+                    ${regionState.phone ? '<span class="ml-1" title="Đã có SĐT CRM">📱</span>' : ''}
+                </span>
+                <span class="px-2.5 py-1 bg-red-100 text-red-600 text-[10px] font-bold rounded-full uppercase tracking-widest shadow-sm">Chưa gửi</span>
+            </div>
+            <div class="text-[10px] mt-2 flex gap-2 items-center">
+                <span class="text-xs">📍</span>
+                <span class="bg-red-100 text-red-600 px-2 py-0.5 rounded-md font-bold">📧 CHƯA GỬI</span>
+                ${isContract ? '<span class="bg-amber-100 text-amber-700 px-2 py-0.5 rounded-md font-bold text-[9px]">✅ ĐÃ KÝ</span>' : ''}
+            </div>
+            <div class="text-[12px] font-medium text-slate-500 truncate flex items-center gap-1.5">
+                <svg class="w-3.5 h-3.5 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>
+                ${region.email}
+            </div>
+        `;
+        listContainer.appendChild(div);
+    });
+};
+window.filterByPending = filterByPending;
+
+const toggleMapFilter = (mode) => {
+    mapFilterMode = mode;
+    // Cập nhật UI toggle buttons
+    document.querySelectorAll('[data-filter-btn]').forEach(btn => {
+        btn.classList.remove('ring-2', 'ring-offset-2', 'ring-blue-500', 'font-bold');
+        if (btn.getAttribute('data-filter-btn') === mode) {
+            btn.classList.add('ring-2', 'ring-offset-2', 'ring-blue-500', 'font-bold');
+        }
+    });
+    renderMap();
+};
+window.toggleMapFilter = toggleMapFilter;
 
 const renderMap = () => {
     markerLayerGroup.clearLayers();
@@ -769,6 +1223,13 @@ const renderMap = () => {
 
     regions.forEach(region => {
         const isSent = isEmailSent(region.name);
+        const isContract = isContracted(region.name);
+        
+        // Áp dụng map filter
+        if (mapFilterMode === 'sent' && !isSent) return;
+        if (mapFilterMode === 'contracted' && !isContract) return;
+        if (mapFilterMode === 'pending' && isSent) return;
+        
         if (isSent) sentCount++;
         
         const icon = isSent ? iconSent : iconPending;
@@ -776,6 +1237,11 @@ const renderMap = () => {
             ? 'bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-300' 
             : 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:from-blue-700 hover:to-indigo-700 shadow-md hover:shadow-lg transition-transform hover:scale-[1.02] active:scale-95';
         const txt = isSent ? 'Hủy gửi (Hoàn tác)' : 'Đánh Dấu Đã Gửi 📤';
+
+        const contractBtnClass = isContract
+            ? 'bg-amber-100 text-amber-700 hover:bg-amber-200 border border-amber-300'
+            : 'bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-300';
+        const contractTxt = isContract ? 'Hủy Ký Hợp Đồng' : 'Ký Hợp Đồng 🤝';
 
         const popupContent = `
             <div class="p-4 flex flex-col gap-2 min-w-[210px]">
@@ -788,6 +1254,10 @@ const renderMap = () => {
                         class="w-full mt-1 px-4 py-2 rounded-xl font-semibold text-sm transition-all duration-300 ${btnClass}">
                     ${txt}
                 </button>
+                <button onclick="window.handleContractToggle('${region.name}')" 
+                        class="w-full px-4 py-2 rounded-xl font-semibold text-sm transition-all duration-300 ${contractBtnClass}">
+                    ${contractTxt}
+                </button>
             </div>
         `;
 
@@ -797,10 +1267,54 @@ const renderMap = () => {
         markerLayerGroup.addLayer(marker);
     });
 
+    let contractedCount = 0;
+    regions.forEach(region => {
+        if (isContracted(region.name)) contractedCount++;
+    });
+
+    // Logic cập nhật: sentCount = những xã đã gửi EMAIL nhưng CHƯA ký
+    // Tính lại sentCount loại bỏ những xã đã ký hợp đồng
+    let actualSentCount = 0;
+    regions.forEach(region => {
+        const isSent = isEmailSent(region.name);
+        const isContract = isContracted(region.name);
+        // Chỉ đếm xã đã gửi nhưng CHỈ chưa ký hợp đồng
+        if (isSent && !isContract) {
+            actualSentCount++;
+        }
+    });
+
+    const pendingCount = regions.length - actualSentCount - contractedCount;
+
+    const totalRegions = regions.length || 1;
+    const sentPercent = totalRegions ? Math.round((actualSentCount / totalRegions) * 100) : 0;
+    const pendingPercent = totalRegions ? Math.round((pendingCount / totalRegions) * 100) : 0;
+    const contractedPercent = totalRegions ? Math.round((contractedCount / totalRegions) * 100) : 0;
+
     document.getElementById('stat-total').textContent = regions.length;
-    document.getElementById('stat-sent').textContent = sentCount;
-    document.getElementById('stat-pending').textContent = regions.length - sentCount;
+    document.getElementById('stat-sent').textContent = actualSentCount;
+    document.getElementById('stat-sent-percent').textContent = `${sentPercent}%`;
+    document.getElementById('stat-pending').textContent = pendingCount;
+    document.getElementById('stat-pending-percent').textContent = `${pendingPercent}%`;
+    document.getElementById('stat-contracted').textContent = contractedCount;
+    document.getElementById('stat-contracted-percent').textContent = `${contractedPercent}%`;
+    renderDataWarnings();
 };
+
+const setSortBy = (sortMode) => {
+    sortBy = sortMode;
+    // Cập nhật UI sort buttons
+    document.querySelectorAll('[data-sort-btn]').forEach(btn => {
+        btn.classList.remove('ring-2', 'ring-offset-1', 'ring-blue-500', 'bg-blue-100', 'text-blue-700');
+        btn.classList.add('bg-slate-100', 'text-slate-700', 'border', 'border-slate-300');
+        if (btn.getAttribute('data-sort-btn') === sortMode) {
+            btn.classList.remove('bg-slate-100', 'text-slate-700', 'border', 'border-slate-300');
+            btn.classList.add('ring-2', 'ring-offset-1', 'ring-blue-500', 'bg-blue-100', 'text-blue-700');
+        }
+    });
+    renderList(document.getElementById('search-input')?.value || '');
+};
+window.setSortBy = setSortBy;
 
 const renderList = (searchTerm = '') => {
     const listContainer = document.getElementById('region-list');
@@ -810,19 +1324,37 @@ const renderList = (searchTerm = '') => {
     listContainer.innerHTML = '';
     if(geoLoadParams) listContainer.appendChild(geoLoadParams);
 
-    const filtered = regions.filter(r => 
+    let filtered = regions.filter(r => 
         r.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
         r.email.toLowerCase().includes(searchTerm.toLowerCase())
     );
 
+    // Áp dụng sort
+    if (sortBy === 'name') {
+        filtered.sort((a, b) => a.name.localeCompare(b.name));
+    } else if (sortBy === 'status') {
+        // Sắp xếp: Đã ký → Đã gửi → Chưa gửi
+        filtered.sort((a, b) => {
+            const aContracted = isContracted(a.name) ? 0 : isEmailSent(a.name) ? 1 : 2;
+            const bContracted = isContracted(b.name) ? 0 : isEmailSent(b.name) ? 1 : 2;
+            return aContracted - bContracted;
+        });
+    } else if (sortBy === 'email') {
+        filtered.sort((a, b) => a.email.localeCompare(b.email));
+    }
+
+    lastRenderedRegionIds = filtered.map((r) => String(r.id));
+
     if (filtered.length === 0) {
         listContainer.insertAdjacentHTML('beforeend', '<div class="text-center text-slate-400 py-6 text-sm font-medium">Không tìm thấy kết quả 🍂</div>');
+        updateBulkSelectionUI();
         return;
     }
 
     filtered.forEach(region => {
         const isSent = isEmailSent(region.name);
         const regionState = getCommuneState(region.name);
+        const isSelected = selectedRegionIds.has(String(region.id));
         
         const badge = isSent 
             ? `<span class="px-2.5 py-1 bg-green-100 text-green-700 text-[10px] font-bold rounded-full uppercase tracking-widest shadow-sm">Đã gửi</span>`
@@ -831,7 +1363,7 @@ const renderList = (searchTerm = '') => {
         const cardClass = isSent ? 'bg-white/90 border-l-[3px] border-emerald-500 opacity-80' : 'bg-white/80 border-l-[3px] border-red-500';
 
         const div = document.createElement('div');
-        div.className = `list-card p-3.5 mb-2.5 rounded-xl cursor-pointer border border-white/60 shadow-sm ${cardClass}`;
+        div.className = `list-card p-3.5 mb-2.5 rounded-xl cursor-pointer border border-white/60 shadow-sm ${cardClass} ${isSelected ? 'ring-2 ring-offset-1 ring-blue-500' : ''}`;
         div.onclick = () => focusRegion(region.id);
         
         div.innerHTML = `
@@ -840,7 +1372,17 @@ const renderList = (searchTerm = '') => {
                     ${isContracted(region.name) ? '🤝 ' : ''}${region.name}
                     ${regionState.phone ? '<span class="ml-1" title="Đã có SĐT CRM">📱</span>' : ''}
                 </span>
-                ${badge}
+                <div class="flex items-center gap-2">
+                    ${badge}
+                    <input
+                        type="checkbox"
+                        ${isSelected ? 'checked' : ''}
+                        onclick="event.stopPropagation()"
+                        onchange="window.toggleRegionSelection('${region.id}', this.checked)"
+                        class="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                        title="Chọn để thao tác hàng loạt"
+                    />
+                </div>
             </div>
             <div class="text-[10px] mt-2 flex gap-2 items-center">
                 <span class="text-xs">📍</span>
@@ -854,6 +1396,8 @@ const renderList = (searchTerm = '') => {
         `;
         listContainer.appendChild(div);
     });
+
+    updateBulkSelectionUI();
 };
 
 document.getElementById('search-input').addEventListener('input', (e) => {

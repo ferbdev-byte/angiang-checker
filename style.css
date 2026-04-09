@@ -121,6 +121,28 @@
     transform: scale(0.98);
 }
 
+#data-warning-panel {
+    max-height: 220px;
+    overflow: hidden;
+}
+
+#data-warning-list {
+    max-height: 140px;
+    overflow-y: auto;
+}
+
+@media (max-width: 767px) {
+    #export-panel-content button {
+        font-size: 11px;
+        padding-top: 8px;
+        padding-bottom: 8px;
+    }
+
+    #data-warning-panel {
+        padding: 8px;
+    }
+}
+
 /* Auth Shake Animation */
 @keyframes shake {
     10%, 90% { transform: translate3d(-1px, 0, 0); }

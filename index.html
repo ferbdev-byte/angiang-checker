@@ -135,19 +135,95 @@
                 </button>
             </div>
             
+            <div class="flex items-center justify-between mb-2 px-1">
+                <div class="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Thống kê</div>
+                <button onclick="window.toggleStatsBox()" class="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold bg-white border border-slate-200 text-slate-600 rounded-md hover:bg-slate-100 transition-colors">
+                    <span id="statsbox-toggle-label">Thu gọn</span>
+                    <svg id="statsbox-toggle-icon" class="w-3 h-3 transition-transform rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                </button>
+            </div>
+
+            <div id="statsbox-content">
             <!-- Stats Grid - Minimalized -->
-            <div class="grid grid-cols-3 gap-2 text-center mb-0">
-                <div class="bg-white/60 p-2 rounded-2xl shadow-sm border border-white">
+            <div class="grid grid-cols-3 gap-2 text-center mb-2">
+                <div onclick="window.filterAll()" class="cursor-pointer bg-white/60 p-2 rounded-2xl shadow-sm border border-white hover:bg-white/80 transition-all hover:shadow-md active:scale-95" title="Click để xem tất cả danh sách">
                     <div class="text-[9px] text-slate-400 font-bold uppercase tracking-tight">Tổng</div>
                     <div class="text-base font-black text-slate-700" id="stat-total">0</div>
                 </div>
-                <div class="bg-green-50/60 p-2 rounded-2xl shadow-sm border border-green-100">
+                <div onclick="window.filterBySent()" class="cursor-pointer bg-green-50/60 p-2 rounded-2xl shadow-sm border border-green-100 hover:bg-green-100/80 transition-all hover:shadow-md active:scale-95" title="Click để xem danh sách đã gửi">
                     <div class="text-[9px] text-green-600 font-bold uppercase tracking-tight">Đã gửi</div>
                     <div class="text-base font-black text-green-600" id="stat-sent">0</div>
+                    <div class="text-[8px] text-green-500 font-bold" id="stat-sent-percent">0%</div>
                 </div>
-                <div class="bg-red-50/60 p-2 rounded-xl shadow-sm border border-red-100">
+                <div onclick="window.filterByPending()" class="cursor-pointer bg-red-50/60 p-2 rounded-xl shadow-sm border border-red-100 hover:bg-red-100/80 transition-all hover:shadow-md active:scale-95" title="Click để xem danh sách chưa gửi">
                     <div class="text-xs text-red-500 font-semibold uppercase tracking-wider">Chưa gửi</div>
                     <div class="text-lg font-bold text-red-500" id="stat-pending">0</div>
+                    <div class="text-[8px] text-red-500 font-bold" id="stat-pending-percent">0%</div>
+                </div>
+            </div>
+            
+            <!-- Hợp đồng đã ký -->
+            <div onclick="window.filterByContract()" class="cursor-pointer bg-yellow-50/60 p-2 rounded-2xl shadow-sm border border-yellow-100 text-center hover:bg-yellow-100/80 transition-all hover:shadow-md active:scale-95" title="Click để xem danh sách hợp đồng đã ký">
+                <div class="text-[9px] text-yellow-700 font-bold uppercase tracking-tight">Hợp đồng đã ký</div>
+                <div class="text-lg font-black text-amber-600" id="stat-contracted">0</div>
+                <div class="text-[8px] text-amber-600 font-bold" id="stat-contracted-percent">0%</div>
+            </div>
+            </div>
+
+            <!-- Sort Buttons -->
+            <div class="flex gap-1 mb-2 flex-wrap">
+                <button onclick="window.setSortBy('name')" data-sort-btn="name" class="px-2 py-1 text-[9px] font-bold bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-all ring-2 ring-offset-1 ring-blue-500" title="Sắp xếp theo tên">
+                    A-Z
+                </button>
+                <button onclick="window.setSortBy('status')" data-sort-btn="status" class="px-2 py-1 text-[9px] font-bold bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-all border border-slate-300" title="Sắp xếp theo trạng thái">
+                    Trạng thái
+                </button>
+                <button onclick="window.setSortBy('email')" data-sort-btn="email" class="px-2 py-1 text-[9px] font-bold bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-all border border-slate-300" title="Sắp xếp theo email">
+                    Email
+                </button>
+            </div>
+
+            <div id="data-warning-panel" class="hidden mb-2 p-2 bg-amber-50/80 border border-amber-200 rounded-xl">
+                <div class="flex items-center justify-between mb-1">
+                    <span class="text-[10px] font-bold text-amber-700 uppercase tracking-wide">Cảnh báo dữ liệu</span>
+                    <span id="data-warning-count" class="text-[10px] font-bold text-amber-700">0 cảnh báo</span>
+                </div>
+                <div class="flex items-center justify-between gap-2 mb-1">
+                    <div id="data-warning-hint" class="text-[10px] font-semibold text-amber-700/80">Đang thu gọn để ưu tiên xem danh sách xã/phường.</div>
+                    <button onclick="window.toggleWarningPanel()" class="shrink-0 px-2 py-0.5 text-[10px] font-bold bg-white border border-amber-200 text-amber-700 rounded-md hover:bg-amber-100 transition-colors inline-flex items-center gap-1">
+                        <span id="data-warning-toggle-text">Xem cảnh báo</span>
+                        <svg id="data-warning-toggle-icon" class="w-3 h-3 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                    </button>
+                </div>
+                <div id="data-warning-list" class="hidden space-y-1"></div>
+            </div>
+
+            <!-- Bulk Actions -->
+            <div id="bulk-actions-bar" class="hidden mb-2 p-2 bg-blue-50/80 border border-blue-100 rounded-xl">
+                <div class="flex items-center justify-between mb-2">
+                    <span id="bulk-selected-count" class="text-[10px] font-bold text-blue-700 uppercase tracking-wide">0 xã đã chọn</span>
+                    <div class="flex items-center gap-1">
+                        <button onclick="window.selectVisibleRegions()" class="px-2 py-1 text-[9px] font-bold bg-white border border-blue-200 text-blue-700 rounded-md hover:bg-blue-100 transition-all">
+                            Chọn đang hiển thị
+                        </button>
+                        <button onclick="window.clearBulkSelection()" class="px-2 py-1 text-[9px] font-bold bg-white border border-slate-200 text-slate-600 rounded-md hover:bg-slate-100 transition-all">
+                            Bỏ chọn
+                        </button>
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-1">
+                    <button onclick="window.applyBulkAction('mark-sent')" class="px-2 py-1.5 text-[10px] font-bold bg-green-600 text-white rounded-md hover:bg-green-700 transition-all">
+                        Đánh dấu đã gửi
+                    </button>
+                    <button onclick="window.applyBulkAction('unmark-sent')" class="px-2 py-1.5 text-[10px] font-bold bg-slate-600 text-white rounded-md hover:bg-slate-700 transition-all">
+                        Hủy đã gửi
+                    </button>
+                    <button onclick="window.applyBulkAction('mark-contracted')" class="px-2 py-1.5 text-[10px] font-bold bg-amber-600 text-white rounded-md hover:bg-amber-700 transition-all">
+                        Đánh dấu đã ký
+                    </button>
+                    <button onclick="window.applyBulkAction('unmark-contracted')" class="px-2 py-1.5 text-[10px] font-bold bg-slate-600 text-white rounded-md hover:bg-slate-700 transition-all">
+                        Hủy đã ký
+                    </button>
                 </div>
             </div>
 
@@ -171,10 +247,29 @@
 
         <!-- Export Buttons -->
         <div class="px-4 py-3 border-t border-gray-200/50 bg-white/60 flex flex-col gap-2">
-            <button onclick="window.exportToCSV()" class="w-full flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-900 border border-slate-700 text-white py-2.5 rounded-xl text-sm font-semibold transition-all shadow-md hover:shadow-lg active:scale-[0.98]">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
-                Xuất danh sách đã gửi (CSV)
-            </button>
+            <div class="flex items-center justify-between px-1">
+                <div class="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Báo cáo & Xuất dữ liệu</div>
+                <button onclick="window.toggleExportActions()" class="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold bg-white border border-slate-200 text-slate-600 rounded-md hover:bg-slate-100 transition-colors">
+                    <span id="export-actions-toggle-label">Thu gọn</span>
+                    <svg id="export-actions-toggle-icon" class="w-3 h-3 transition-transform rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                </button>
+            </div>
+
+            <div id="export-actions-content" class="grid grid-cols-1 gap-2">
+                <button onclick="window.exportToCSV()" class="w-full flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-900 border border-slate-700 text-white py-2 rounded-xl text-xs font-semibold transition-all shadow-sm">
+                    Xuất Đã gửi chưa ký (CSV)
+                </button>
+                <button onclick="window.exportPendingCSV()" class="w-full flex items-center justify-center gap-2 bg-rose-600 hover:bg-rose-700 border border-rose-500 text-white py-2 rounded-xl text-xs font-semibold transition-all shadow-sm">
+                    Xuất Chưa gửi (CSV)
+                </button>
+                <button onclick="window.exportContractedCSV()" class="w-full flex items-center justify-center gap-2 bg-amber-600 hover:bg-amber-700 border border-amber-500 text-white py-2 rounded-xl text-xs font-semibold transition-all shadow-sm">
+                    Xuất hợp đồng đã ký (CSV)
+                </button>
+                <button onclick="window.exportManagementSummaryCSV()" class="w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 border border-emerald-500 text-white py-2 rounded-xl text-xs font-semibold transition-all shadow-sm">
+                    Xuất tổng hợp quản lý (CSV)
+                </button>
+            </div>
+
             <button onclick="window.exportCoordinates()" class="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 border border-indigo-500 text-white py-2.5 rounded-xl text-sm font-semibold transition-all shadow-md hover:shadow-lg active:scale-[0.98]">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
                 Tải xuống Tọa Độ (JSON)
@@ -190,6 +285,23 @@
     <!-- Map Container Container (Tự động lấp đầy) -->
     <div class="flex-1 h-full relative z-0">
         <div id="map" class="h-full w-full"></div>
+
+        <!-- Map Filter Toggle Buttons (Top Right) -->
+        <div class="absolute z-[1000] top-6 right-6 flex flex-col gap-2 bg-white/90 backdrop-blur-md p-3 rounded-2xl shadow-xl border border-white/50">
+            <div class="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Lọc bản đồ:</div>
+            <button data-filter-btn="all" onclick="window.toggleMapFilter('all')" class="px-3 py-1.5 bg-white text-slate-700 hover:bg-slate-100 text-sm font-semibold rounded-lg transition-all ring-2 ring-offset-2 ring-blue-500 border border-slate-200 active:scale-95">
+                Tất cả
+            </button>
+            <button data-filter-btn="sent" onclick="window.toggleMapFilter('sent')" class="px-3 py-1.5 bg-white text-slate-700 hover:bg-slate-100 text-sm font-semibold rounded-lg transition-all border border-slate-200 active:scale-95">
+                Đã gửi
+            </button>
+            <button data-filter-btn="contracted" onclick="window.toggleMapFilter('contracted')" class="px-3 py-1.5 bg-white text-slate-700 hover:bg-slate-100 text-sm font-semibold rounded-lg transition-all border border-slate-200 active:scale-95">
+                Đã ký
+            </button>
+            <button data-filter-btn="pending" onclick="window.toggleMapFilter('pending')" class="px-3 py-1.5 bg-white text-slate-700 hover:bg-slate-100 text-sm font-semibold rounded-lg transition-all border border-slate-200 active:scale-95">
+                Chưa gửi
+            </button>
+        </div>
 
         <!-- Nút Toggle Floating (Luôn hiện trên bản đồ) -->
         <button id="sidebar-toggle-btn" onclick="window.toggleSidebar()" 

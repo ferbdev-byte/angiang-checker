@@ -4,13 +4,24 @@
 
 // Configuration
 const FILE_NAME = '105-phuongxa-- email angiang.xlsx';
-const AUTH_KEY = 'ag_tracker_auth';
-const AUTH_ROLE = 'ag_tracker_role';
-const USERS = [
-    { user: 'admin', pass: 'admin123', role: 'admin', name: 'Admin Hub' },
-    { user: 'guest', pass: 'guest123', role: 'viewer', name: 'Khách (Guest)' }
-];
+const SUPABASE_CONFIG = window.__SUPABASE_CONFIG__ || {};
+const SUPABASE_URL = SUPABASE_CONFIG.url || '';
+const SUPABASE_ANON_KEY = SUPABASE_CONFIG.anonKey || '';
+const supabaseClient = (window.supabase && SUPABASE_URL && SUPABASE_ANON_KEY)
+    ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+        auth: {
+            persistSession: true,
+            autoRefreshToken: true
+        }
+    })
+    : null;
+const COMMUNE_STATE_TABLE = 'commune_states';
+
 let isDataLoaded = false;
+let hasBootstrapped = false;
+let currentUser = null;
+let userStates = new Map();
+let communeStateChannel = null;
 const RACH_GIA_COORDS = L.latLng(10.0159, 105.0809); // Tọa độ trung tâm Rạch Giá
 
 const DEFAULT_LATLNG = [10.3759, 105.4333]; // Long Xuyen fallback
@@ -33,6 +44,125 @@ L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r
 let regions = [];
 let markerLayerGroup = L.layerGroup().addTo(map);
 let stripePattern;
+
+const emptyCommuneState = () => ({
+    email_sent: false,
+    contracted: false,
+    phone: '',
+    note: '',
+    updated_at: null
+});
+
+const resolveCommuneKey = (value) => {
+    if (!value) return '';
+
+    const rawName = typeof value === 'object'
+        ? value.name || value.commune_name || value.region_name || value.label || ''
+        : value;
+
+    return normalizeCommuneName(String(rawName));
+};
+
+const getCommuneState = (value) => {
+    const key = resolveCommuneKey(value);
+    return userStates.get(key) || emptyCommuneState();
+};
+
+const loadUserStates = async () => {
+    if (!supabaseClient || !currentUser) {
+        userStates = new Map();
+        return;
+    }
+
+    const { data, error } = await supabaseClient
+        .from(COMMUNE_STATE_TABLE)
+        .select('commune_key,email_sent,contracted,phone,note,updated_at');
+
+    if (error) throw error;
+
+    userStates = new Map((data || []).map((row) => [row.commune_key, {
+        email_sent: Boolean(row.email_sent),
+        contracted: Boolean(row.contracted),
+        phone: row.phone || '',
+        note: row.note || '',
+        updated_at: row.updated_at || null
+    }]));
+};
+
+const upsertCommuneState = async (communeName, patch) => {
+    if (!supabaseClient || !currentUser) {
+        throw new Error('Chưa kết nối Supabase hoặc chưa đăng nhập.');
+    }
+
+    const communeKey = resolveCommuneKey(communeName);
+    const nextState = {
+        ...emptyCommuneState(),
+        ...getCommuneState(communeKey),
+        ...patch,
+        updated_at: new Date().toISOString(),
+        commune_key: communeKey,
+        commune_name: String(communeName),
+        updated_by: currentUser.id
+    };
+
+    const { error } = await supabaseClient
+        .from(COMMUNE_STATE_TABLE)
+        .upsert(nextState, { onConflict: 'commune_key' });
+
+    if (error) throw error;
+
+    userStates.set(communeKey, {
+        email_sent: Boolean(nextState.email_sent),
+        contracted: Boolean(nextState.contracted),
+        phone: nextState.phone || '',
+        note: nextState.note || '',
+        updated_at: nextState.updated_at
+    });
+};
+
+const refreshSharedStates = async () => {
+    try {
+        await loadUserStates();
+        if (geoJsonLayer) {
+            geoJsonLayer.setStyle(getChoroplethStyle);
+        }
+        renderMap();
+        renderList(document.getElementById('search-input')?.value || '');
+    } catch (error) {
+        console.error('Không thể đồng bộ dữ liệu realtime:', error);
+    }
+};
+
+const subscribeToCommuneStates = () => {
+    if (!supabaseClient) return;
+
+    if (communeStateChannel) {
+        supabaseClient.removeChannel(communeStateChannel);
+        communeStateChannel = null;
+    }
+
+    communeStateChannel = supabaseClient
+        .channel('commune-states-realtime')
+        .on(
+            'postgres_changes',
+            {
+                event: '*',
+                schema: 'public',
+                table: COMMUNE_STATE_TABLE
+            },
+            () => {
+                void refreshSharedStates();
+            }
+        )
+        .subscribe();
+};
+
+const unsubscribeFromCommuneStates = () => {
+    if (!supabaseClient || !communeStateChannel) return;
+
+    supabaseClient.removeChannel(communeStateChannel);
+    communeStateChannel = null;
+};
 
 // Helper: Normalize commune names
 
@@ -109,7 +239,7 @@ const getChoroplethStyle = (feature) => {
             };
         } 
         // TRƯỜNG HỢP 2: Đã gửi Email (Xanh Pastel)
-        else if (isEmailSent(trackingRegion.id)) {
+        else if (isEmailSent(trackingRegion.name)) {
             style = {
                 fillColor: '#bae6fd', // Xanh dương nhạt (Sky-200)
                 weight: 2,
@@ -179,13 +309,7 @@ const onGeoJsonFeature = (feature, layer) => {
         click: (e) => {
             const name = getCommuneName(feature.properties);
             const isContract = isContracted(name);
-            const role = localStorage.getItem(AUTH_ROLE);
-            
-            // Lấy thông tin Ghi chú / CRM hiện tại
-            const notesData = JSON.parse(localStorage.getItem('ag_commune_notes') || '{}');
-            const data = notesData[normalizeCommuneName(name)] || { phone: '', note: '' };
-
-            const isGuest = role === 'viewer';
+            const data = getCommuneState(name);
             const btnContractText = isContract ? 'Hủy Chốt ✖️' : 'Chốt Hợp Đồng 🤝';
             const btnContractClass = isContract 
                 ? 'bg-slate-100 text-slate-600 border border-slate-300' 
@@ -210,20 +334,19 @@ const onGeoJsonFeature = (feature, layer) => {
                         <div>
                             <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1.5 ml-1">Số điện thoại liên hệ</label>
                             <input type="text" id="crm-phone-${normalizeCommuneName(name)}" 
-                                   value="${data.phone}" ${isGuest ? 'disabled' : ''}
+                                   value="${data.phone || ''}"
                                    placeholder="Ví dụ: 090..."
-                                   class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 transition-all ${isGuest ? 'opacity-50' : ''}">
+                                   class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 transition-all">
                         </div>
                         <div>
                             <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1.5 ml-1">Ghi chú chiến dịch</label>
                             <textarea id="crm-note-${normalizeCommuneName(name)}" 
-                                      rows="2" ${isGuest ? 'disabled' : ''}
+                                      rows="2"
                                       placeholder="Nhập ghi chú quan trọng..."
-                                      class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 transition-all ${isGuest ? 'opacity-50' : ''}">${data.note}</textarea>
+                                      class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 transition-all">${data.note || ''}</textarea>
                         </div>
                     </div>
 
-                    ${!isGuest ? `
                     <div class="flex flex-col gap-2">
                         <button onclick="window.handleSaveNote('${name}')" 
                                 class="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-sm shadow-lg shadow-blue-600/20 active:scale-95 transition-all">
@@ -234,11 +357,6 @@ const onGeoJsonFeature = (feature, layer) => {
                             ${btnContractText}
                         </button>
                     </div>
-                    ` : `
-                    <div class="p-3 bg-indigo-50 text-indigo-700 text-[11px] font-medium rounded-xl border border-indigo-100 flex items-center gap-2">
-                         <span>🔒 Chế độ xem: Bạn không có quyền chỉnh sửa hồ sơ.</span>
-                    </div>
-                    `}
                 </div>
             `;
             L.popup({ maxWidth: 350 })
@@ -329,17 +447,24 @@ const iconSent = L.divIcon({
     popupAnchor: [0, -10]
 });
 
-// Logic Lưu trữ trạng thái gửi email LocalStorage
-const isEmailSent = (id) => localStorage.getItem(`ag_wow_${id}`) === 'true';
+// Logic lưu trạng thái gửi email theo tài khoản Supabase
+const isEmailSent = (value) => getCommuneState(value).email_sent === true;
 
-const toggleEmailStatus = (id) => {
-    if (isEmailSent(id)) {
-        localStorage.removeItem(`ag_wow_${id}`);
-    } else {
-        localStorage.setItem(`ag_wow_${id}`, 'true');
+const toggleEmailStatus = async (id) => {
+    try {
+        const region = regions.find((item) => String(item.id) === String(id));
+        if (!region) return;
+
+        const nextValue = !isEmailSent(region.name);
+        await upsertCommuneState(region.name, {
+            email_sent: nextValue
+        });
+    } catch (error) {
+        console.error('Không thể cập nhật trạng thái email:', error);
+        alert('Không thể lưu trạng thái email lên Supabase. Kiểm tra bảng commune_states.');
+        return;
     }
-    
-    // Cập nhật Style Bản đồ tức thì cho Layer GeoJSON
+
     if (geoJsonLayer) {
         geoJsonLayer.setStyle(getChoroplethStyle);
     }
@@ -349,52 +474,53 @@ const toggleEmailStatus = (id) => {
 };
 window.handleStatusToggle = toggleEmailStatus;
 
-// Logic Chốt Hợp Đồng (LocalStorage)
-const isContracted = (name) => {
-    const norm = normalizeCommuneName(name);
-    return localStorage.getItem(`ag_contract_${norm}`) === 'true';
-};
+// Logic chốt hợp đồng theo tài khoản Supabase
+const isContracted = (value) => getCommuneState(value).contracted === true;
 
-const toggleContractStatus = (name) => {
-    const norm = normalizeCommuneName(name);
-    if (isContracted(name)) {
-        localStorage.removeItem(`ag_contract_${norm}`);
-    } else {
-        localStorage.setItem(`ag_contract_${norm}`, 'true');
+const toggleContractStatus = async (name) => {
+    try {
+        const nextValue = !isContracted(name);
+        await upsertCommuneState(name, {
+            contracted: nextValue
+        });
+    } catch (error) {
+        console.error('Không thể cập nhật trạng thái hợp đồng:', error);
+        alert('Không thể lưu hợp đồng lên Supabase. Kiểm tra bảng commune_states.');
+        return;
     }
-    
-    // Fix: Cập nhật Style Bản đồ tức thì cho Layer GeoJSON
+
     if (geoJsonLayer) {
-        // Ép Leaflet tính toán lại style cho tất cả các vùng
         geoJsonLayer.setStyle(getChoroplethStyle);
     }
-    
-    // Tự động đóng popup sau khi chốt để thấy kết quả
+
     map.closePopup();
-    
+
     renderMap();
     renderList(document.getElementById('search-input').value);
 };
 window.handleContractToggle = toggleContractStatus;
 
 // Mini-CRM Logic: Lưu trữ SĐT và Ghi chú
-const handleSaveNote = (name) => {
+const handleSaveNote = async (name) => {
     const norm = normalizeCommuneName(name);
     const phone = document.getElementById(`crm-phone-${norm}`).value;
     const note = document.getElementById(`crm-note-${norm}`).value;
 
-    const notesData = JSON.parse(localStorage.getItem('ag_commune_notes') || '{}');
-    notesData[norm] = { phone, note, updatedAt: new Date().toISOString() };
-    
-    localStorage.setItem('ag_commune_notes', JSON.stringify(notesData));
-    
-    // Tự động đóng popup và nạp lại list
+    try {
+        await upsertCommuneState(name, {
+            phone,
+            note
+        });
+    } catch (error) {
+        console.error('Không thể lưu ghi chú CRM:', error);
+        alert('Không thể lưu ghi chú lên Supabase. Kiểm tra bảng commune_states.');
+        return;
+    }
+
     map.closePopup();
     renderList(document.getElementById('search-input').value);
-    
-    // Toast thông báo (Dùng native alert hoặc UI tùy chọn)
+
     console.log(`✅ Đã lưu CRM cho ${name}`);
-    // Ta có thể thêm một UI Toast sau nếu muốn chuyên nghiệp hơn
 };
 window.handleSaveNote = handleSaveNote;
 
@@ -614,7 +740,7 @@ window.focusRegion = focusRegion;
 
 // Logic Backup Dữ liệu
 const exportToCSV = () => {
-    const sentRegions = regions.filter(r => isEmailSent(r.id));
+    const sentRegions = regions.filter(r => isEmailSent(r.name));
     if (sentRegions.length === 0) {
         alert("Chưa có xã nào được đánh dấu đã gửi!");
         return;
@@ -642,7 +768,7 @@ const renderMap = () => {
     let sentCount = 0;
 
     regions.forEach(region => {
-        const isSent = isEmailSent(region.id);
+        const isSent = isEmailSent(region.name);
         if (isSent) sentCount++;
         
         const icon = isSent ? iconSent : iconPending;
@@ -695,7 +821,8 @@ const renderList = (searchTerm = '') => {
     }
 
     filtered.forEach(region => {
-        const isSent = isEmailSent(region.id);
+        const isSent = isEmailSent(region.name);
+        const regionState = getCommuneState(region.name);
         
         const badge = isSent 
             ? `<span class="px-2.5 py-1 bg-green-100 text-green-700 text-[10px] font-bold rounded-full uppercase tracking-widest shadow-sm">Đã gửi</span>`
@@ -711,7 +838,7 @@ const renderList = (searchTerm = '') => {
             <div class="flex justify-between items-center mb-1.5">
                 <span class="font-bold text-slate-800 text-sm leading-tight pr-2">
                     ${isContracted(region.name) ? '🤝 ' : ''}${region.name}
-                    ${(JSON.parse(localStorage.getItem('ag_commune_notes') || '{}')[normalizeCommuneName(region.name)]?.phone) ? '<span class="ml-1" title="Đã có SĐT CRM">📱</span>' : ''}
+                    ${regionState.phone ? '<span class="ml-1" title="Đã có SĐT CRM">📱</span>' : ''}
                 </span>
                 ${badge}
             </div>
@@ -736,87 +863,149 @@ document.getElementById('search-input').addEventListener('input', (e) => {
 // ============================================
 // AUTH & BOOTSTRAP (Đặt ở cuối để tránh lỗi ReferenceError)
 // ============================================
-const checkAuth = () => {
-    const auth = localStorage.getItem(AUTH_KEY);
+const showLoginScreen = () => {
     const loginScreen = document.getElementById('login-screen');
     const appContainer = document.getElementById('app-container');
-
-    if (auth === 'true') {
-        loginScreen.classList.add('hidden');
-        appContainer.classList.remove('hidden');
-        
-        // Hiển thị vai trò người dùng trong UI
-        const userDisplayName = localStorage.getItem('ag_user_name') || 'Admin Hub';
-        const userRoleName = localStorage.getItem(AUTH_ROLE) === 'viewer' ? 'Khách tham quan' : 'Quản trị viên';
-        
-        const userInfoEl = document.getElementById('user-info-bar');
-        if (userInfoEl) {
-            userInfoEl.innerHTML = `
-                <div class="flex items-center gap-3">
-                    <div class="w-10 h-10 flex items-center justify-center ${localStorage.getItem(AUTH_ROLE) === 'viewer' ? 'bg-slate-500/20 text-slate-400' : 'bg-blue-500/20 text-blue-400'} rounded-xl border border-white/10">
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
-                    </div>
-                    <div class="flex flex-col">
-                        <span class="text-xs font-black text-white tracking-wide uppercase">${userDisplayName}</span>
-                        <span class="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Quyền: ${userRoleName}</span>
-                    </div>
-                </div>
-                <button onclick="window.handleLogout()" class="p-2.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-xl transition-all active:scale-95 group" title="Đăng xuất">
-                    <svg class="w-5 h-5 group-hover:rotate-12 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
-                </button>
-            `;
-        }
-        // SỬA LỖI: Leaflet map cần được invalidateSize khi container từ hidden -> visible
-        setTimeout(() => {
-            if (map) map.invalidateSize();
-        }, 300);
-        
-        if (!isDataLoaded) {
-            isDataLoaded = true;
-            initPatterns(); // Khởi tạo pattern gạch sọc
-            initData(); // Nạp dữ liệu Excel/GeoJSON
-        }
-    } else {
-        loginScreen.classList.remove('hidden');
-        appContainer.classList.add('hidden');
-    }
+    if (loginScreen) loginScreen.classList.remove('hidden');
+    if (appContainer) appContainer.classList.add('hidden');
 };
 
-// Logic Đăng xuất
-const handleLogout = () => {
-    localStorage.removeItem(AUTH_KEY);
-    localStorage.removeItem(AUTH_ROLE);
-    localStorage.removeItem('ag_user_name');
-    window.location.reload(); 
+const showAppScreen = () => {
+    const loginScreen = document.getElementById('login-screen');
+    const appContainer = document.getElementById('app-container');
+    if (loginScreen) loginScreen.classList.add('hidden');
+    if (appContainer) appContainer.classList.remove('hidden');
+};
+
+const renderUserInfoBar = (user) => {
+    const userInfoEl = document.getElementById('user-info-bar');
+    if (!userInfoEl) return;
+
+    const displayName = user?.email || 'Tài khoản Supabase';
+
+    userInfoEl.innerHTML = `
+        <div class="flex items-center gap-3">
+            <div class="w-10 h-10 flex items-center justify-center bg-blue-500/20 text-blue-400 rounded-xl border border-white/10">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
+            </div>
+            <div class="flex flex-col">
+                <span class="text-xs font-black text-white tracking-wide uppercase">${displayName}</span>
+                <span class="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Đồng bộ trạng thái lên Supabase</span>
+            </div>
+        </div>
+        <button onclick="window.handleLogout()" class="p-2.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-xl transition-all active:scale-95 group" title="Đăng xuất">
+            <svg class="w-5 h-5 group-hover:rotate-12 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
+        </button>
+    `;
+};
+
+const bootAuthenticatedApp = async (user) => {
+    currentUser = user;
+    showAppScreen();
+    renderUserInfoBar(user);
+
+    try {
+        await loadUserStates();
+    } catch (error) {
+        console.error('Không thể tải trạng thái người dùng:', error);
+        userStates = new Map();
+    }
+
+    subscribeToCommuneStates();
+
+    setTimeout(() => {
+        if (map) map.invalidateSize();
+    }, 300);
+
+    if (!isDataLoaded) {
+        isDataLoaded = true;
+        initPatterns();
+        await initData();
+        return;
+    }
+
+    renderMap();
+    renderList(document.getElementById('search-input')?.value || '');
+    hasBootstrapped = true;
+};
+
+const syncAuthState = async (session) => {
+    const user = session?.user || null;
+
+    if (!user) {
+        currentUser = null;
+        userStates = new Map();
+        hasBootstrapped = false;
+        unsubscribeFromCommuneStates();
+        showLoginScreen();
+        return;
+    }
+
+    if (hasBootstrapped && currentUser?.id === user.id) {
+        showAppScreen();
+        renderUserInfoBar(user);
+        return;
+    }
+
+    await bootAuthenticatedApp(user);
+};
+
+const handleLogout = async () => {
+    if (supabaseClient) {
+        await supabaseClient.auth.signOut();
+    }
 };
 window.handleLogout = handleLogout;
 
-const handleLogin = (e) => {
+const handleLogin = async (e) => {
     e.preventDefault();
     const userVal = document.getElementById('username').value;
     const passVal = document.getElementById('password').value;
     const errorMsg = document.getElementById('login-error');
 
-    const foundUser = USERS.find(u => u.user === userVal && u.pass === passVal);
-
-    if (foundUser) {
-        localStorage.setItem(AUTH_KEY, 'true');
-        localStorage.setItem(AUTH_ROLE, foundUser.role);
-        localStorage.setItem('ag_user_name', foundUser.name);
-        errorMsg.classList.add('hidden');
-        checkAuth();
-    } else {
+    if (!supabaseClient) {
+        errorMsg.textContent = 'Chưa cấu hình SUPABASE_URL hoặc SUPABASE_ANON_KEY.';
         errorMsg.classList.remove('hidden');
-        // Rung form để báo lỗi
+        return;
+    }
+
+    const { data, error } = await supabaseClient.auth.signInWithPassword({
+        email: userVal,
+        password: passVal
+    });
+
+    if (error || !data?.user) {
+        console.error('Đăng nhập Supabase thất bại:', error);
+        errorMsg.textContent = 'Tài khoản hoặc mật khẩu Supabase không đúng!';
+        errorMsg.classList.remove('hidden');
         const form = document.getElementById('login-form');
         form.classList.add('animate-shake');
         setTimeout(() => form.classList.remove('animate-shake'), 500);
+        return;
     }
+
+    errorMsg.classList.add('hidden');
 };
 
 // Khởi tạo Auth khi trang sẵn sàng
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
     const loginForm = document.getElementById('login-form');
     if (loginForm) loginForm.addEventListener('submit', handleLogin);
-    checkAuth();
+
+    if (!supabaseClient) {
+        showLoginScreen();
+        const errorMsg = document.getElementById('login-error');
+        if (errorMsg) {
+            errorMsg.textContent = 'Thiếu cấu hình Supabase. Kiểm tra .env.local và chạy lại server.';
+            errorMsg.classList.remove('hidden');
+        }
+        return;
+    }
+
+    supabaseClient.auth.onAuthStateChange((_event, session) => {
+        void syncAuthState(session);
+    });
+
+    const { data: { session } } = await supabaseClient.auth.getSession();
+    await syncAuthState(session);
 });

@@ -36,8 +36,8 @@ const map = L.map('map', {
 L.control.zoom({ position: 'bottomright' }).addTo(map);
 
 // Sử dụng bản đồ sáng/hiện đại thiết kế nhạt phù hợp glassmorphism
-L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-    subdomains: 'abcd',
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
     maxZoom: 19
 }).addTo(map);
 
